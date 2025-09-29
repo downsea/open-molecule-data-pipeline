@@ -39,10 +39,8 @@ def _sdf_entry(cid: str, smiles: str, **metadata: str) -> str:
     lines.append("$$$$")
     return "\n".join(lines) + "\n"
 
-
 def _write_link_file(path: Path, urls: list[str]) -> None:
     path.write_text("\n".join(urls) + "\n")
-
 
 def _build_downloader(fixtures: dict[str, bytes], checksum_suffix: str = ".md5"):
     calls: list[dict[str, Any]] = []
@@ -136,6 +134,7 @@ def test_pubchem_connector_resumes_from_checkpoint(tmp_path: Path) -> None:
             batch_size=2,
             link_file=link_file,
             download_dir=tmp_path / "downloads",
+
         ),
         checkpoint_manager=manager,
         aria2_downloader=downloader,

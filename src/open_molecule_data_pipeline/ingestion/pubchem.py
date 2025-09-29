@@ -36,6 +36,7 @@ class PubChemConfig(SourceConfig):
     link_file: Path = Field(
         description="Path to the newline-delimited list of PubChem SDF URLs."
     )
+
     download_dir: Path | None = Field(
         default=None,
         description="Directory where PubChem archives and checksum files are stored.",
@@ -74,10 +75,12 @@ class PubChemConnector(BaseConnector):
         self._aria2_options = self._build_aria2_options()
         self._entries = self._parse_link_file(config.link_file)
 
+
     def _resolve_download_dir(self) -> Path:
         if self.config.download_dir is not None:
             return self.config.download_dir
         return self.config.link_file.resolve().parent
+
 
     def _build_aria2_options(self) -> Aria2Options:
         options = self.config.aria2_options
