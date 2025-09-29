@@ -9,11 +9,11 @@ from typing import Any
 
 import httpx
 import orjson
-import structlog
+from ..logging_utils import get_logger
 from pydantic import BaseModel, Field
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 DEFAULT_USER_AGENT = "open-molecule-data-pipeline/0.1"

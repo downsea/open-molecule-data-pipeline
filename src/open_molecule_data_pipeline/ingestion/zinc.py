@@ -6,12 +6,12 @@ import gzip
 import shlex
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Iterator
+from typing import Callable, Iterator
 
-import httpx
-import structlog
 from pydantic import Field
 
+from ..logging_utils import get_logger
+from .aria2 import Aria2Options, download_with_aria2
 from .common import (
     BaseConnector,
     CheckpointManager,
@@ -20,7 +20,7 @@ from .common import (
     SourceConfig,
 )
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,10 @@ class ZincConfig(SourceConfig):
             "If True, missing tranche archives will be downloaded automatically "
             "using the URLs in the wget script."
         ),
+    )
+    aria2_options: dict[str, str | int | float | bool] = Field(
+        default_factory=dict,
+        description="Optional overrides for aria2c concurrency and retry flags.",
     )
     username: str | None = Field(
         default=None,
@@ -81,10 +85,21 @@ class ZincConnector(BaseConnector):
         self,
         config: ZincConfig,
         checkpoint_manager: CheckpointManager,
+        aria2_downloader: Callable[..., None] | None = None,
     ) -> None:
         super().__init__(config=config, checkpoint_manager=checkpoint_manager)
         self._download_dir = self._resolve_download_dir()
         self._commands = self._parse_wget_file(config.wget_file)
+        self._aria2_downloader = aria2_downloader or download_with_aria2
+        self._aria2_options = self._build_aria2_options()
+
+    def _build_aria2_options(self) -> Aria2Options:
+        if not self.config.aria2_options:
+            return Aria2Options()
+        try:
+            return Aria2Options(**self.config.aria2_options)
+        except TypeError as exc:  # pragma: no cover - defensive guard
+            raise ValueError("Invalid aria2 configuration supplied") from exc
 
     def _resolve_download_dir(self) -> Path:
         if self.config.download_dir is not None:
@@ -170,7 +185,7 @@ class ZincConnector(BaseConnector):
     def _ensure_archive(self, command: _WgetCommand) -> Path:
         target_path = self._download_dir / command.output_path
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        if target_path.exists():
+        if target_path.exists() and target_path.stat().st_size > 0:
             return target_path
 
         if not self.config.download_missing:
@@ -185,14 +200,12 @@ class ZincConnector(BaseConnector):
             url=command.url,
             output=str(target_path),
         )
-        auth: tuple[str, str] | None = None
-        if command.username and command.password:
-            auth = (command.username, command.password)
-        with httpx.stream("GET", command.url, auth=auth, timeout=60.0) as response:
-            response.raise_for_status()
-            with target_path.open("wb") as handle:
-                for chunk in response.iter_bytes():
-                    handle.write(chunk)
+        kwargs: dict[str, object] = {"options": self._aria2_options, "skip_existing": False}
+        if command.username:
+            kwargs["username"] = command.username
+        if command.password:
+            kwargs["password"] = command.password
+        self._aria2_downloader(command.url, target_path, **kwargs)
         return target_path
 
     def _iter_records(self, command: _WgetCommand) -> Iterator[MoleculeRecord]:
