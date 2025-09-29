@@ -10,8 +10,6 @@ from typing import Any
 
 import inspect
 
-import httpx
-import structlog
 import yaml
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
@@ -26,10 +24,11 @@ from .common import (
     NDJSONWriter,
     SourceConfig,
 )
+from ..logging_utils import get_logger
 from .pubchem import PubChemConfig, PubChemConnector
 from .zinc import ZincConfig, ZincConnector
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 ClientFactory = Callable[..., object]
 
