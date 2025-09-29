@@ -5,20 +5,13 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator, Mapping
+from typing import Callable
 
 from pydantic import Field
 
 from ..logging_utils import get_logger
 from .aria2 import Aria2Options, download_with_aria2
-from .common import (
-    BaseConnector,
-    CheckpointManager,
-    IngestionPage,
-    MoleculeRecord,
-    SourceConfig,
-)
-from .sdf import iter_sdf_records
+from .common import BaseConnector, CheckpointManager, SourceConfig
 
 logger = get_logger(__name__)
 
@@ -53,9 +46,18 @@ class PubChemConfig(SourceConfig):
         default="md5",
         description="Checksum algorithm used when checksum files are downloaded.",
     )
-    identifier_tag: str = "PUBCHEM_COMPOUND_CID"
-    smiles_tag: str = "PUBCHEM_OPENEYE_ISO_SMILES"
-    metadata_tags: list[str] = Field(default_factory=list)
+    identifier_tag: str = Field(
+        default="PUBCHEM_COMPOUND_CID",
+        description="Identifier field retained for backwards compatibility.",
+    )
+    smiles_tag: str = Field(
+        default="PUBCHEM_OPENEYE_ISO_SMILES",
+        description="SMILES field retained for backwards compatibility.",
+    )
+    metadata_tags: list[str] = Field(
+        default_factory=list,
+        description="Metadata fields retained for backwards compatibility.",
+    )
     aria2_options: dict[str, str | int | float | bool] = Field(default_factory=dict)
 
 
@@ -182,94 +184,21 @@ class PubChemConnector(BaseConnector):
 
         return self._download_dir
 
-    def _build_record(self, properties: Mapping[str, str]) -> MoleculeRecord:
-        identifier = properties.get(self.config.identifier_tag, "").strip()
-        smiles = properties.get(self.config.smiles_tag, "").strip()
-        metadata: dict[str, str] = {
-            key: value
-            for key, value in properties.items()
-            if key not in {self.config.identifier_tag, self.config.smiles_tag}
-        }
-        if self.config.metadata_tags:
-            metadata = {
-                key: metadata[key]
-                for key in self.config.metadata_tags
-                if key in metadata
-            }
-        metadata = {key: value for key, value in metadata.items() if value}
-        return MoleculeRecord(
-            source=self.config.name,
-            identifier=identifier,
-            smiles=smiles,
-            metadata=metadata,
-        )
+    def download_archives(self) -> list[Path]:
+        """Ensure all referenced archives and checksums are present locally."""
 
-    def _iter_records(self, entry: _PubChemEntry) -> Iterator[MoleculeRecord]:
-        archive = self._ensure_archive(entry)
-        if archive is None:
-            logger.warning(
-                "ingestion.pubchem.skip_entry",
-                source=self.config.name,
-                url=entry.url,
-            )
-            return
-
-        for properties in iter_sdf_records(archive):
-            yield self._build_record(properties)
-
-    def fetch_pages(self) -> Iterator[IngestionPage]:
-        checkpoint = self._checkpoint_manager.load(self.config.name)
-        if checkpoint and checkpoint.completed:
-            logger.info("ingestion.skip", source=self.config.name, reason="completed")
-            return
-
-        start_file = 0
-        start_offset = 0
-        if checkpoint:
-            start_file = int(checkpoint.cursor.get("file_index", 0))
-            start_offset = int(checkpoint.cursor.get("record_offset", 0))
-
-        batch: list[MoleculeRecord] = []
-        entries = self._entries
-        for file_index in range(start_file, len(entries)):
-            entry = entries[file_index]
-            record_offset = start_offset if file_index == start_file else 0
-            processed = 0
-
-            for record in self._iter_records(entry):
-                if processed < record_offset:
-                    processed += 1
-                    continue
-                batch.append(record)
-                processed += 1
-                if len(batch) >= self.config.batch_size:
-                    next_cursor = {
-                        "file_index": file_index,
-                        "file_name": entry.filename,
-                        "record_offset": processed,
-                    }
-                    yield IngestionPage(records=list(batch), next_cursor=next_cursor)
-                    batch.clear()
-
-            start_offset = 0
-
-            if batch:
-                next_cursor = (
-                    {
-                        "file_index": file_index + 1,
-                        "file_name": entries[file_index + 1].filename
-                        if file_index + 1 < len(entries)
-                        else None,
-                        "record_offset": 0,
-                    }
-                    if file_index + 1 < len(entries)
-                    else None
+        downloaded: list[Path] = []
+        for entry in self._entries:
+            archive = self._ensure_archive(entry)
+            if archive is None:
+                logger.warning(
+                    "ingestion.pubchem.skip_entry",
+                    source=self.config.name,
+                    url=entry.url,
                 )
-                yield IngestionPage(records=list(batch), next_cursor=next_cursor)
-                batch.clear()
-
-        if not entries:
-            yield IngestionPage(records=[], next_cursor=None)
+                continue
+            downloaded.append(archive)
+        return downloaded
 
     def close(self) -> None:  # pragma: no cover - nothing to close
         return

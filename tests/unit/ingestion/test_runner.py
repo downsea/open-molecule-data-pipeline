@@ -99,24 +99,14 @@ def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path, monkeypatc
 
     run_ingestion(config)
 
-    output_dir = tmp_path / "raw" / "pubchem"
-    first_batch = output_dir / "pubchem-batch-000001.jsonl"
-    second_batch = output_dir / "pubchem-batch-000002.jsonl"
-
-    assert first_batch.exists()
-    with first_batch.open("r", encoding="utf-8") as fh:
-        first_lines = [json.loads(line) for line in fh]
-    assert [record["identifier"] for record in first_lines] == ["CID1", "CID2"]
-
-    assert second_batch.exists()
-    with second_batch.open("r", encoding="utf-8") as fh:
-        second_lines = [json.loads(line) for line in fh]
-    assert [record["identifier"] for record in second_lines] == ["CID3"]
+    downloads_dir = tmp_path / "downloads"
+    assert (downloads_dir / "chunk_a.sdf.gz").exists()
+    assert (downloads_dir / "chunk_b.sdf.gz").exists()
 
     checkpoint_path = tmp_path / "checkpoints" / "ingestion" / "pubchem.json"
     assert checkpoint_path.exists()
     checkpoint = json.loads(checkpoint_path.read_text())
-    assert checkpoint["batch_index"] == 2
+    assert checkpoint["batch_index"] == 0
     assert checkpoint["completed"] is True
 
     report_path = tmp_path / "raw" / "raw-data-report.md"
@@ -124,11 +114,11 @@ def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path, monkeypatc
     report_contents = report_path.read_text(encoding="utf-8")
     assert "# Raw Data Download Report" in report_contents
     assert "## pubchem" in report_contents
-    assert "| pubchem | pubchem | yes | 2 | 2 | 3 |" in report_contents
+    assert "| pubchem | pubchem | yes | 0 | 0 | 0 |" in report_contents
     assert str(tmp_path / "downloads").replace("\\", "/") in report_contents
 
     # Running again should read from checkpoint without additional output
     run_ingestion(config)
 
     updated_report = report_path.read_text(encoding="utf-8")
-    assert "| pubchem | pubchem | yes | 2 | 0 | 0 |" in updated_report
+    assert "| pubchem | pubchem | yes | 0 | 0 | 0 |" in updated_report

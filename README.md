@@ -69,9 +69,9 @@ Stage 2 introduces configurable ingestion connectors for ZINC, PubChem, ChEMBL, 
 uv run smiles ingest --config config/ingestion-example.yaml
 ```
 
-Each source writes gzip-compressed NDJSON batches to `data/raw/<source>/` and maintains resumable checkpoints under `data/checkpoints/ingestion/<source>.json`. The sample configuration caches PubChem, ZINC, and ChEMBL archives under `data/raw/` and enables automatic resumption of interrupted transfers. To resume an interrupted job, re-run the same command; completed sources will be skipped automatically.
+Streaming connectors (for example ChemSpider) write gzip-compressed NDJSON batches to `data/raw/<source>/` and maintain resumable checkpoints under `data/checkpoints/ingestion/<source>.json`. Download-focused connectors (PubChem, ChEMBL, ZINC) instead ensure the referenced SDF archives are cached under `data/raw/` while marking the checkpoint as completed so future runs can skip already mirrored files. To resume an interrupted job, re-run the same command; completed sources will be skipped automatically.
 
-Every successful ingestion run also generates a Markdown summary at `data/raw/raw-data-report.md`. The report captures per-source batch and record counts, output file sizes, and any cached download artifacts so you can audit large transfers quickly.
+Every successful ingestion run also generates a Markdown summary at `data/raw/raw-data-report.md`. The report captures per-source batch and record counts (where applicable), output file sizes, and any cached download artifacts so you can audit large transfers quickly.
 
 ### Source-specific notes
 

@@ -194,20 +194,40 @@ def _run_source(
     start_batch = checkpoint.batch_index if checkpoint else 0
     batches_written = 0
     records_written = 0
+    download_method = getattr(connector, "download_archives", None)
 
     try:
-        for page in connector.fetch_pages():
-            _persist_page(writer, checkpoint_manager, definition.name, start_batch, page)
-            if page.records:
-                start_batch += 1
-                batches_written += 1
-                records_written += len(page.records)
+        if callable(download_method):
+            if checkpoint and checkpoint.completed:
+                logger.info("ingestion.skip", source=definition.name, reason="completed")
+            else:
+                downloaded = download_method()
+                logger.info(
+                    "ingestion.download.complete",
+                    source=definition.name,
+                    files=len(downloaded),
+                )
+                checkpoint_manager.store(
+                    definition.name,
+                    IngestionCheckpoint(cursor={}, batch_index=0, completed=True),
+                )
+        else:
+            for page in connector.fetch_pages():
+                _persist_page(writer, checkpoint_manager, definition.name, start_batch, page)
+                if page.records:
+                    start_batch += 1
+                    batches_written += 1
+                    records_written += len(page.records)
     finally:
         connector.close()
 
     final_checkpoint = checkpoint_manager.load(definition.name)
-    total_batches = final_checkpoint.batch_index if final_checkpoint else start_batch
-    completed = bool(final_checkpoint.completed) if final_checkpoint else False
+    if final_checkpoint:
+        total_batches = final_checkpoint.batch_index
+        completed = bool(final_checkpoint.completed)
+    else:
+        total_batches = start_batch
+        completed = False
 
     output_summary = _summarise_output_directory(job_config.output_dir / definition.name)
     download_summary = _summarise_downloads(connector)
