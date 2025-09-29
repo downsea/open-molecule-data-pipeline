@@ -80,7 +80,6 @@ class ChEMBLConnector(BaseConnector):
 
         entries: list[_ChEMBLEntry] = []
         for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-
             line = raw_line.strip()
             if not line or line.startswith("#"):
                 continue

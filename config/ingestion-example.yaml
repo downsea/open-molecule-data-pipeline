@@ -9,7 +9,7 @@ job:
     - type: pubchem
       name: pubchem
       options:
-        index_file: data/Index_of_pubchem_Compound_CURRENT-Full_SDF.html
+        link_file: data/pubchem_sdf_link.txt
         download_dir: data/raw/pubchem
         identifier_tag: PUBCHEM_COMPOUND_CID
         smiles_tag: PUBCHEM_OPENEYE_ISO_SMILES

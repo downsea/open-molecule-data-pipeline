@@ -43,25 +43,26 @@ def _sdf_entry(cid: str, smiles: str) -> str:
     )
 
 
-def _write_index(path: Path, filenames: list[str]) -> None:
-    links = "".join(f'<a href="{name}">{name}</a>\n' for name in filenames)
-    path.write_text(f"<html><body>{links}</body></html>")
+def _write_link_file(path: Path, urls: list[str]) -> None:
+    path.write_text("\n".join(urls) + "\n")
 
 
 def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    base_url = "https://example.test/pubchem/"
-    index_file = tmp_path / "index.html"
-    filenames = ["chunk_a.sdf.gz", "chunk_a.sdf.gz.md5", "chunk_b.sdf.gz", "chunk_b.sdf.gz.md5"]
-    _write_index(index_file, filenames)
+    urls = [
+        "https://example.test/pubchem/chunk_a.sdf.gz",
+        "https://example.test/pubchem/chunk_b.sdf.gz",
+    ]
+    link_file = tmp_path / "links.txt"
+    _write_link_file(link_file, urls)
 
     payload_a = _gzip_bytes(_sdf_entry("CID1", "C") + _sdf_entry("CID2", "CC"))
     payload_b = _gzip_bytes(_sdf_entry("CID3", "CCC"))
     fixtures: dict[str, bytes] = {
-        f"{base_url}chunk_a.sdf.gz": payload_a,
-        f"{base_url}chunk_a.sdf.gz.md5": hashlib.md5(payload_a).hexdigest().encode("utf-8")
+        urls[0]: payload_a,
+        f"{urls[0]}.md5": hashlib.md5(payload_a).hexdigest().encode("utf-8")
         + b"  chunk_a.sdf.gz\n",
-        f"{base_url}chunk_b.sdf.gz": payload_b,
-        f"{base_url}chunk_b.sdf.gz.md5": hashlib.md5(payload_b).hexdigest().encode("utf-8")
+        urls[1]: payload_b,
+        f"{urls[1]}.md5": hashlib.md5(payload_b).hexdigest().encode("utf-8")
         + b"  chunk_b.sdf.gz\n",
     }
 
@@ -89,9 +90,8 @@ def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path, monkeypatc
                 type="pubchem",
                 name="pubchem",
                 options={
-                    "index_file": index_file,
+                    "link_file": link_file,
                     "download_dir": tmp_path / "downloads",
-                    "base_url": base_url,
                 },
             )
         ],

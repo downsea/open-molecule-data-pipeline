@@ -1,12 +1,10 @@
-"""PubChem ingestion connector implementation using local index manifests."""
+"""PubChem ingestion connector implementation using manifest link files."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
-from urllib.parse import urljoin
 
 from pydantic import Field
 
@@ -24,24 +22,6 @@ from .sdf import iter_sdf_records
 logger = get_logger(__name__)
 
 
-class _IndexLinkParser(HTMLParser):
-    """Collect all hyperlinks from an HTML index page."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._links: set[str] = set()
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.lower() != "a":
-            return
-        href = next((value for key, value in attrs if key.lower() == "href"), None)
-        if href:
-            self._links.add(href.strip())
-
-    def links(self) -> list[str]:
-        return sorted(self._links)
-
-
 @dataclass(frozen=True)
 class _PubChemEntry:
     filename: str
@@ -53,14 +33,24 @@ class _PubChemEntry:
 class PubChemConfig(SourceConfig):
     """Configuration for downloading PubChem SDF bundles via :command:`aria2c`."""
 
-    index_file: Path = Field(description="Path to the saved PubChem HTML index page.")
+    link_file: Path = Field(
+        description="Path to the newline-delimited list of PubChem SDF URLs."
+    )
+
     download_dir: Path | None = Field(
         default=None,
         description="Directory where PubChem archives and checksum files are stored.",
     )
-    base_url: str | None = Field(
-        default=None,
-        description="Optional base URL used when links inside the index are relative.",
+    checksum_suffix: str | None = Field(
+        default=".md5",
+        description=(
+            "Optional suffix appended to each SDF URL to locate its checksum file. "
+            "Set to null to skip checksum downloads."
+        ),
+    )
+    checksum_algorithm: str | None = Field(
+        default="md5",
+        description="Checksum algorithm used when checksum files are downloaded.",
     )
     identifier_tag: str = "PUBCHEM_COMPOUND_CID"
     smiles_tag: str = "PUBCHEM_OPENEYE_ISO_SMILES"
@@ -83,12 +73,14 @@ class PubChemConnector(BaseConnector):
         self._download_dir = self._resolve_download_dir()
         self._aria2_downloader = aria2_downloader or download_with_aria2
         self._aria2_options = self._build_aria2_options()
-        self._entries = self._parse_index(config.index_file)
+        self._entries = self._parse_link_file(config.link_file)
+
 
     def _resolve_download_dir(self) -> Path:
         if self.config.download_dir is not None:
             return self.config.download_dir
-        return self.config.index_file.resolve().parent
+        return self.config.link_file.resolve().parent
+
 
     def _build_aria2_options(self) -> Aria2Options:
         options = self.config.aria2_options
@@ -99,59 +91,50 @@ class PubChemConnector(BaseConnector):
         except TypeError as exc:  # pragma: no cover - validation guard
             raise ValueError("Invalid aria2 options supplied") from exc
 
-    def _parse_index(self, path: Path) -> list[_PubChemEntry]:
+    def _parse_link_file(self, path: Path) -> list[_PubChemEntry]:
         if not path.exists():
-            raise FileNotFoundError(f"PubChem index not found: {path}")
-
-        parser = _IndexLinkParser()
-        parser.feed(path.read_text(encoding="utf-8", errors="replace"))
-        parser.close()
-
-        sdf_links: dict[str, str] = {}
-        checksum_links: dict[str, tuple[str, str]] = {}
-
-        for raw_href in parser.links():
-            resolved = self._resolve_href(raw_href)
-            name = Path(raw_href).name or Path(resolved).name
-            if not name:
-                continue
-            if name.endswith(".md5"):
-                target = name[:-4]
-                checksum_links[target] = (resolved, "md5")
-            elif name.endswith((".sdf", ".sdf.gz")):
-                sdf_links[name] = resolved
+            raise FileNotFoundError(f"PubChem link file not found: {path}")
 
         entries: list[_PubChemEntry] = []
-        for filename in sorted(sdf_links):
+        checksum_suffix = self.config.checksum_suffix
+        checksum_algorithm = self.config.checksum_algorithm if checksum_suffix else None
+
+        for line_number, raw_line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+        ):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            url = line.split()[0]
+            filename = Path(url).name
+            if not filename:
+                raise ValueError(
+                    f"Unable to determine filename for PubChem URL on line {line_number}: {line}"
+                )
+
             checksum_url: str | None = None
             checksum_alg: str | None = None
-            if filename in checksum_links:
-                checksum_url, checksum_alg = checksum_links[filename]
+            if checksum_suffix and checksum_algorithm:
+                checksum_url = f"{url}{checksum_suffix}"
+                checksum_alg = checksum_algorithm
+
             entries.append(
                 _PubChemEntry(
                     filename=filename,
-                    url=sdf_links[filename],
+                    url=url,
                     checksum_url=checksum_url,
                     checksum_algorithm=checksum_alg,
                 )
             )
 
         if not entries:
-            raise ValueError(f"No SDF entries discovered in index: {path}")
+            raise ValueError(f"No SDF URLs discovered in link file: {path}")
         return entries
 
-    def _resolve_href(self, href: str) -> str:
-        if href.startswith("http://") or href.startswith("https://"):
-            return href
-        if self.config.base_url is None:
-            raise ValueError(
-                "Index contains relative links but no base_url was configured: "
-                f"{href}"
-            )
-        return urljoin(self.config.base_url, href)
-
     def _checksum_path(self, entry: _PubChemEntry) -> Path:
-        return self._download_dir / f"{entry.filename}.md5"
+        suffix = self.config.checksum_suffix or ""
+        return self._download_dir / f"{entry.filename}{suffix}"
 
     def _load_checksum(self, entry: _PubChemEntry) -> tuple[str, str] | None:
         if not entry.checksum_url or not entry.checksum_algorithm:
@@ -159,7 +142,6 @@ class PubChemConnector(BaseConnector):
         checksum_path = self._checksum_path(entry)
         if not checksum_path.exists() or checksum_path.stat().st_size == 0:
             checksum_path.parent.mkdir(parents=True, exist_ok=True)
-
             self._aria2_downloader(
                 entry.checksum_url,
                 checksum_path,
@@ -175,7 +157,6 @@ class PubChemConnector(BaseConnector):
     def _ensure_archive(self, entry: _PubChemEntry) -> Path:
         target = self._download_dir / entry.filename
         target.parent.mkdir(parents=True, exist_ok=True)
-
         checksum = self._load_checksum(entry)
         skip_existing = checksum is None
         kwargs: dict[str, object] = {"options": self._aria2_options, "skip_existing": skip_existing}

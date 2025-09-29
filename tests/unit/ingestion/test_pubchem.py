@@ -39,11 +39,8 @@ def _sdf_entry(cid: str, smiles: str, **metadata: str) -> str:
     lines.append("$$$$")
     return "\n".join(lines) + "\n"
 
-
-def _write_index(path: Path, filenames: list[str]) -> None:
-    links = "".join(f'<a href="{name}">{name}</a>\n' for name in filenames)
-    path.write_text(f"<html><body>{links}</body></html>")
-
+def _write_link_file(path: Path, urls: list[str]) -> None:
+    path.write_text("\n".join(urls) + "\n")
 
 def _build_downloader(fixtures: dict[str, bytes], checksum_suffix: str = ".md5"):
     calls: list[dict[str, Any]] = []
@@ -65,23 +62,20 @@ def test_pubchem_connector_batches_records(tmp_path: Path) -> None:
     md5_a = hashlib.md5(sdf_a).hexdigest().encode("utf-8")
     md5_b = hashlib.md5(sdf_b).hexdigest().encode("utf-8")
 
-    base_url = "https://example.test/pubchem/"
-    filenames = [
-        "Compound_A.sdf.gz",
-        "Compound_A.sdf.gz.md5",
-        "Compound_B.sdf.gz",
-        "Compound_B.sdf.gz.md5",
+    urls = [
+        "https://example.test/pubchem/Compound_A.sdf.gz",
+        "https://example.test/pubchem/Compound_B.sdf.gz",
     ]
-    index_file = tmp_path / "index.html"
-    _write_index(index_file, filenames)
+    link_file = tmp_path / "links.txt"
+    _write_link_file(link_file, urls)
 
     fixtures = {
-        url: payload
+        f"{url}": payload
         for url, payload in {
-            f"{base_url}Compound_A.sdf.gz": sdf_a,
-            f"{base_url}Compound_A.sdf.gz.md5": md5_a + b"  Compound_A.sdf.gz\n",
-            f"{base_url}Compound_B.sdf.gz": sdf_b,
-            f"{base_url}Compound_B.sdf.gz.md5": md5_b + b"  Compound_B.sdf.gz\n",
+            urls[0]: sdf_a,
+            f"{urls[0]}.md5": md5_a + b"  Compound_A.sdf.gz\n",
+            urls[1]: sdf_b,
+            f"{urls[1]}.md5": md5_b + b"  Compound_B.sdf.gz\n",
         }.items()
     }
 
@@ -92,9 +86,8 @@ def test_pubchem_connector_batches_records(tmp_path: Path) -> None:
         config=PubChemConfig(
             name="pubchem",
             batch_size=2,
-            index_file=index_file,
+            link_file=link_file,
             download_dir=tmp_path / "downloads",
-            base_url=base_url,
         ),
         checkpoint_manager=manager,
         aria2_downloader=downloader,
@@ -123,14 +116,13 @@ def test_pubchem_connector_resumes_from_checkpoint(tmp_path: Path) -> None:
     )
     md5_payload = hashlib.md5(payload).hexdigest().encode("utf-8")
 
-    base_url = "https://example.test/pubchem/"
-    filenames = ["Chunk.sdf.gz", "Chunk.sdf.gz.md5"]
-    index_file = tmp_path / "index.html"
-    _write_index(index_file, filenames)
+    url = "https://example.test/pubchem/Chunk.sdf.gz"
+    link_file = tmp_path / "links.txt"
+    _write_link_file(link_file, [url])
 
     fixtures = {
-        f"{base_url}Chunk.sdf.gz": payload,
-        f"{base_url}Chunk.sdf.gz.md5": md5_payload + b"  Chunk.sdf.gz\n",
+        url: payload,
+        f"{url}.md5": md5_payload + b"  Chunk.sdf.gz\n",
     }
 
     downloader, calls = _build_downloader(fixtures)
@@ -140,9 +132,9 @@ def test_pubchem_connector_resumes_from_checkpoint(tmp_path: Path) -> None:
         config=PubChemConfig(
             name="pubchem",
             batch_size=2,
-            index_file=index_file,
+            link_file=link_file,
             download_dir=tmp_path / "downloads",
-            base_url=base_url,
+
         ),
         checkpoint_manager=manager,
         aria2_downloader=downloader,
