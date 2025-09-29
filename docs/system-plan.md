@@ -1,10 +1,10 @@
 # SMILES Processing System Implementation Plan
 
-## 1. Foundation & Environment Setup
-- **Dependency Management**: Initialize `pyproject.toml` with core dependencies (`httpx`, `pydantic`, `polars`, `rdkit`, `tenacity`, `pyyaml`, `click`, `orjson`, `uvicorn`, etc.) and configure `uv` scripts for linting (`uv run ruff check`), formatting (`uv run ruff format`), and testing (`uv run pytest`).
-- **Project Layout**: Create `src/` packages for `ingestion`, `pipeline`, `analysis`, `reporting`, and shared utilities (`common`). Add `config/` for environment-aware YAML configs and `data/` for artifacts (`raw/`, `processed/`, `checkpoints/`).
-- **Continuous Integration**: Add GitHub Actions workflow using `uv` to install dependencies, run linting, type checking (via `mypy`), and tests.
-- **Documentation**: Expand `README.md` with setup instructions (`uv sync`), overview diagrams, and quickstart examples.
+## 1. Foundation & Environment Setup *(Completed)*
+- **Dependency Management**: ✅ `pyproject.toml` defines core runtime dependencies (`httpx`, `pydantic`, `polars`, `rdkit-pypi`, `tenacity`, `pyyaml`, `click`, `orjson`, `uvicorn`, `structlog`) with documented commands for linting (`uv run ruff check`), formatting (`uv run ruff format`), type checking (`uv run mypy src`), and testing (`uv run pytest`).
+- **Project Layout**: ✅ Repository scaffolded with `src/` packages (`ingestion`, `pipeline`, `analysis`, `reporting`, `common`), configuration directory (`config/`), and artifact storage directories under `data/` (`raw/`, `processed/`, `checkpoints/`).
+- **Continuous Integration**: ✅ GitHub Actions workflow leverages `uv` to sync dependencies, then executes linting, type checking, and tests on push and pull requests.
+- **Documentation**: ✅ `README.md` now documents `uv sync` environment setup, the repository layout, and developer tooling quickstart commands.
 
 ## 2. Data Ingestion Layer
 - **Connectors**: Implement modules for each source:
