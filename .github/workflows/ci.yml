@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "work"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          python-version: "3.11"
+
+      - name: Sync dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Format check
+        run: uv run --extra dev ruff format --check
+
+      - name: Lint
+        run: uv run --extra dev ruff check
+
+      - name: Type check
+        run: uv run --extra dev mypy src
+
+      - name: Test
+        run: uv run --extra dev pytest

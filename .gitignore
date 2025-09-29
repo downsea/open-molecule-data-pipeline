@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+*.dll
+*.log
+*.tmp
+*.sqlite
+*.db
+.build/
+.dist/
+htmlcov/
+.coverage*
+.pytest_cache/
+.mypy_cache/
+ruff_cache/
+.uv/
+.venv/
+.env
+
+# Data artifacts (preserve scaffolding)
+data/raw/*
+!data/raw/.gitkeep
+
+data/processed/*
+!data/processed/.gitkeep
+
+data/checkpoints/*
+!data/checkpoints/.gitkeep
+
+# Config overrides
+config/*.local.*
