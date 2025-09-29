@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import inspect
+
 import httpx
 import structlog
 import yaml
@@ -113,11 +115,12 @@ def _build_connector(
         "config": config,
         "checkpoint_manager": checkpoint_manager,
     }
-    if issubclass(connector_cls, BaseHttpConnector):
-        if client_factory is not None:
+    if client_factory is not None:
+        signature = inspect.signature(connector_cls.__init__)
+        if "client_factory" in signature.parameters:
             kwargs["client_factory"] = client_factory
-    elif client_factory is not None:
-        kwargs["ftp_factory"] = client_factory
+        elif "ftp_factory" in signature.parameters:
+            kwargs["ftp_factory"] = client_factory
     return connector_cls(**kwargs)  # type: ignore[arg-type]
 
 

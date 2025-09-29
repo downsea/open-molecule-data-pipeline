@@ -2,37 +2,15 @@ from __future__ import annotations
 
 import gzip
 import io
-from collections.abc import Callable
 from pathlib import Path
+
+import httpx
 
 from open_molecule_data_pipeline.ingestion.common import (
     CheckpointManager,
     IngestionCheckpoint,
 )
 from open_molecule_data_pipeline.ingestion.pubchem import PubChemConfig, PubChemConnector
-
-
-class FakeFTP:
-    """Minimal in-memory FTP server for testing."""
-
-    def __init__(self, files: dict[str, bytes]) -> None:
-        self._files = files
-        self.cwd_path: str | None = None
-        self.closed = False
-
-    def cwd(self, path: str) -> None:  # noqa: D401 - required by ftplib interface
-        self.cwd_path = path
-
-    def nlst(self) -> list[str]:
-        return sorted(self._files)
-
-    def retrbinary(self, cmd: str, callback: Callable[[bytes], object]) -> None:
-        _, filename = cmd.split(maxsplit=1)
-        data = self._files[filename]
-        callback(data)
-
-    def quit(self) -> None:
-        self.closed = True
 
 
 def _gzip_bytes(payload: str) -> bytes:
@@ -62,16 +40,47 @@ def _sdf_entry(cid: str, smiles: str, **metadata: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _mock_pubchem_client(files: dict[str, bytes], base_url: str) -> httpx.Client:
+    base = httpx.URL(base_url)
+    listing_path = base.path
+    if not listing_path.endswith("/"):
+        listing_path = f"{listing_path}/"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method != "GET":  # pragma: no cover - defensive guard
+            return httpx.Response(405)
+
+        path = request.url.path
+        if path.rstrip("/") == listing_path.rstrip("/"):
+            links = "".join(
+                f'<a href="{name}">{name}</a>' for name in sorted(files)
+            )
+            html = f"<html><body>{links}</body></html>"
+            return httpx.Response(200, text=html)
+
+        if not path.startswith(listing_path):
+            return httpx.Response(404)
+
+        filename = path[len(listing_path) :]
+        if filename not in files:
+            return httpx.Response(404)
+        return httpx.Response(200, content=files[filename])
+
+    transport = httpx.MockTransport(handler)
+    return httpx.Client(transport=transport, timeout=5.0)
+
+
 def test_pubchem_connector_batches_records(tmp_path: Path) -> None:
     file_a = _gzip_bytes(_sdf_entry("CID1", "C") + _sdf_entry("CID2", "CC"))
     file_b = _gzip_bytes(_sdf_entry("CID3", "CCC", PUBCHEM_IUPAC_NAME="Propane"))
     files = {"file_a.sdf.gz": file_a, "file_b.sdf.gz": file_b}
+    base_url = "https://example.test/pubchem/Compound/CURRENT-Full/SDF/"
 
     manager = CheckpointManager(tmp_path)
     connector = PubChemConnector(
-        config=PubChemConfig(name="pubchem", batch_size=2, ftp_directory="."),
+        config=PubChemConfig(name="pubchem", batch_size=2, base_url=base_url),
         checkpoint_manager=manager,
-        ftp_factory=lambda: FakeFTP(files),
+        client_factory=lambda: _mock_pubchem_client(files, base_url),
     )
 
     pages = list(connector.fetch_pages())
@@ -91,12 +100,13 @@ def test_pubchem_connector_batches_records(tmp_path: Path) -> None:
 def test_pubchem_connector_resumes_from_checkpoint(tmp_path: Path) -> None:
     sdf_payload = _sdf_entry("CID1", "C") + _sdf_entry("CID2", "CC") + _sdf_entry("CID3", "CCC")
     files = {"chunk.sdf.gz": _gzip_bytes(sdf_payload)}
+    base_url = "https://example.test/pubchem/Compound/CURRENT-Full/SDF/"
 
     manager = CheckpointManager(tmp_path)
     connector = PubChemConnector(
-        config=PubChemConfig(name="pubchem", batch_size=2, ftp_directory="."),
+        config=PubChemConfig(name="pubchem", batch_size=2, base_url=base_url),
         checkpoint_manager=manager,
-        ftp_factory=lambda: FakeFTP(files),
+        client_factory=lambda: _mock_pubchem_client(files, base_url),
     )
 
     page_iter = connector.fetch_pages()
@@ -108,9 +118,9 @@ def test_pubchem_connector_resumes_from_checkpoint(tmp_path: Path) -> None:
     connector.close()
 
     resume_connector = PubChemConnector(
-        config=PubChemConfig(name="pubchem", batch_size=2, ftp_directory="."),
+        config=PubChemConfig(name="pubchem", batch_size=2, base_url=base_url),
         checkpoint_manager=manager,
-        ftp_factory=lambda: FakeFTP(files),
+        client_factory=lambda: _mock_pubchem_client(files, base_url),
     )
 
     remaining_pages = list(resume_connector.fetch_pages())
