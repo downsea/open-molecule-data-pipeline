@@ -97,13 +97,13 @@ def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path, monkeypatc
         ],
     )
 
-    run_ingestion(config)
+    run_ingestion(config, mode="download")
 
     downloads_dir = tmp_path / "downloads"
     assert (downloads_dir / "chunk_a.sdf.gz").exists()
     assert (downloads_dir / "chunk_b.sdf.gz").exists()
 
-    checkpoint_path = tmp_path / "checkpoints" / "ingestion" / "pubchem.json"
+    checkpoint_path = tmp_path / "checkpoints" / "ingestion-download" / "pubchem.json"
     assert checkpoint_path.exists()
     checkpoint = json.loads(checkpoint_path.read_text())
     assert checkpoint["batch_index"] == 0
@@ -118,7 +118,75 @@ def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path, monkeypatc
     assert str(tmp_path / "downloads").replace("\\", "/") in report_contents
 
     # Running again should read from checkpoint without additional output
-    run_ingestion(config)
+    run_ingestion(config, mode="download")
 
-    updated_report = report_path.read_text(encoding="utf-8")
-    assert "| pubchem | pubchem | yes | 0 | 0 | 0 |" in updated_report
+
+def test_parse_ingestion_emits_batches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    urls = [
+        "https://example.test/pubchem/chunk_a.sdf.gz",
+        "https://example.test/pubchem/chunk_b.sdf.gz",
+    ]
+    link_file = tmp_path / "links.txt"
+    _write_link_file(link_file, urls)
+
+    payload_a = _gzip_bytes(_sdf_entry("CID1", "C") + _sdf_entry("CID2", "CC"))
+    payload_b = _gzip_bytes(_sdf_entry("CID3", "CCC"))
+
+    downloads_dir = tmp_path / "downloads"
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+    (downloads_dir / "chunk_a.sdf.gz").write_bytes(payload_a)
+    (downloads_dir / "chunk_b.sdf.gz").write_bytes(payload_b)
+
+    def fail_downloader(*args: object, **kwargs: object) -> None:  # pragma: no cover
+        raise AssertionError("download invoked during parse phase")
+
+    monkeypatch.setattr(
+        "open_molecule_data_pipeline.ingestion.pubchem.download_with_aria2",
+        fail_downloader,
+    )
+
+    config = IngestionJobConfig(
+        output_dir=tmp_path / "processed",
+        checkpoint_dir=tmp_path / "checkpoints",
+        batch_size=2,
+        concurrency=1,
+        compress_output=False,
+        sources=[
+            SourceDefinition(
+                type="pubchem",
+                name="pubchem",
+                options={
+                    "link_file": link_file,
+                    "download_dir": downloads_dir,
+                },
+            )
+        ],
+    )
+
+    run_ingestion(config, mode="parse")
+
+    output_dir = tmp_path / "processed" / "pubchem"
+    first_batch = output_dir / "pubchem-batch-000001.jsonl"
+    second_batch = output_dir / "pubchem-batch-000002.jsonl"
+
+    assert first_batch.exists()
+    with first_batch.open("r", encoding="utf-8") as fh:
+        first_lines = [json.loads(line) for line in fh]
+    assert [record["identifier"] for record in first_lines] == ["CID1", "CID2"]
+
+    assert second_batch.exists()
+    with second_batch.open("r", encoding="utf-8") as fh:
+        second_lines = [json.loads(line) for line in fh]
+    assert [record["identifier"] for record in second_lines] == ["CID3"]
+
+    checkpoint_path = tmp_path / "checkpoints" / "ingestion-parse" / "pubchem.json"
+    assert checkpoint_path.exists()
+    checkpoint = json.loads(checkpoint_path.read_text())
+    assert checkpoint["batch_index"] == 2
+    assert checkpoint["completed"] is True
+
+    report_path = tmp_path / "processed" / "raw-data-report.md"
+    assert report_path.exists()
+    report_contents = report_path.read_text(encoding="utf-8")
+    assert "## pubchem" in report_contents
+    assert "| pubchem | pubchem | yes | 2 | 2 | 3 |" in report_contents

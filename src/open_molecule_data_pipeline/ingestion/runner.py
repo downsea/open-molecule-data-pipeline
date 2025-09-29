@@ -181,8 +181,10 @@ def _run_source(
     definition: SourceDefinition,
     job_config: IngestionJobConfig,
     client_factory: ClientFactory | None,
+    checkpoint_root: Path,
+    mode: str,
 ) -> SourceIngestionSummary:
-    checkpoint_manager = CheckpointManager(job_config.checkpoint_dir / "ingestion")
+    checkpoint_manager = CheckpointManager(checkpoint_root)
     writer = NDJSONWriter(job_config.output_dir, compress=job_config.compress_output)
     connector = _build_connector(
         definition,
@@ -197,13 +199,13 @@ def _run_source(
     download_method = getattr(connector, "download_archives", None)
 
     try:
-        if callable(download_method):
+        if mode == "download" and callable(download_method):
             if checkpoint and checkpoint.completed:
-                logger.info("ingestion.skip", source=definition.name, reason="completed")
+                logger.info("download.skip", source=definition.name, reason="completed")
             else:
                 downloaded = download_method()
                 logger.info(
-                    "ingestion.download.complete",
+                    "download.complete",
                     source=definition.name,
                     files=len(downloaded),
                 )
@@ -212,6 +214,12 @@ def _run_source(
                     IngestionCheckpoint(cursor={}, batch_index=0, completed=True),
                 )
         else:
+            if mode == "download" and not callable(download_method):
+                logger.warning(
+                    "download.unsupported",
+                    source=definition.name,
+                    reason="connector does not expose download_archives",
+                )
             for page in connector.fetch_pages():
                 _persist_page(writer, checkpoint_manager, definition.name, start_batch, page)
                 if page.records:
@@ -227,7 +235,7 @@ def _run_source(
         completed = bool(final_checkpoint.completed)
     else:
         total_batches = start_batch
-        completed = False
+        completed = mode == "download"
 
     output_summary = _summarise_output_directory(job_config.output_dir / definition.name)
     download_summary = _summarise_downloads(connector)
@@ -381,6 +389,7 @@ def run_ingestion(
     config: IngestionJobConfig,
     *,
     client_factories: Mapping[str, ClientFactory] | None = None,
+    mode: str = "download",
 ) -> None:
     """Execute the configured ingestion job."""
 
@@ -393,9 +402,20 @@ def run_ingestion(
         return client_factories.get(definition.name) or client_factories.get(definition.type)
 
     summaries: list[SourceIngestionSummary] = []
+    checkpoint_root = config.checkpoint_dir / (
+        "ingestion-download" if mode == "download" else "ingestion-parse"
+    )
+
     with ThreadPoolExecutor(max_workers=config.concurrency) as executor:
         futures = {
-            executor.submit(_run_source, source, config, _factory_for(source)): source.name
+            executor.submit(
+                _run_source,
+                source,
+                config,
+                _factory_for(source),
+                checkpoint_root,
+                mode,
+            ): source.name
             for source in config.sources
         }
         for future in as_completed(futures):

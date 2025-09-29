@@ -25,7 +25,7 @@ def download_command(config_path: Path) -> None:
 
     job_config = load_config(config_path)
     logger.info("download.start", sources=[source.name for source in job_config.sources])
-    run_ingestion(job_config)
+    run_ingestion(job_config, mode="download")
     logger.info("download.finish")
 
 
@@ -42,7 +42,7 @@ def ingest_command(config_path: Path) -> None:
 
     job_config = load_config(config_path)
     logger.info("ingestion.start", sources=[source.name for source in job_config.sources])
-    run_ingestion(job_config)
+    run_ingestion(job_config, mode="parse")
     logger.info("ingestion.finish")
 
 

@@ -1,14 +1,28 @@
 # Example ingestion job definition used by `smiles ingest`.
 job:
-  output_dir: data/raw
+  output_dir: data/processed
   checkpoint_dir: data/checkpoints
   batch_size: 500
   concurrency: 2
   compress_output: true
   sources:
+    - type: pubchem
+      name: pubchem
+      options:
+        link_file: data/pubchem_sdf_link.txt
+        download_dir: data/raw/pubchem
+        identifier_tag: PUBCHEM_COMPOUND_CID
+        smiles_tag: PUBCHEM_OPENEYE_ISO_SMILES
+        metadata_tags:
+          - PUBCHEM_IUPAC_INCHI
     - type: zinc
       name: zinc
       options:
         uri_file: data/ZINC-downloader-2D-txt.uri
-        download_dir: data/raw/zinc22
+        download_dir: data/raw/zinc
         download_missing: true
+    - type: chembl
+      name: chembl
+      options:
+        link_file: data/chEMBL_sdf_link.txt
+        download_dir: data/raw/chembl
