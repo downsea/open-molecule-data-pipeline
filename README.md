@@ -49,11 +49,12 @@ uv run pytest
 │   └── checkpoints/   # Persistent state for restartable jobs
 ├── docs/              # Architecture plans and design notes
 ├── src/
-│   ├── analysis/      # Molecular analysis modules
-│   ├── common/        # Shared utilities and base classes
-│   ├── ingestion/     # Connectors for public chemical databases
-│   ├── pipeline/      # Execution engine and checkpointing logic
-│   └── reporting/     # Report and dashboard generation
+│   └── open_molecule_data_pipeline/
+│       ├── analysis/  # Molecular analysis modules
+│       ├── common/    # Shared utilities and base classes
+│       ├── ingestion/ # Connectors, CLI, orchestration
+│       ├── pipeline/  # Execution engine and checkpointing logic
+│       └── reporting/ # Report and dashboard generation
 └── tests/
     ├── integration/   # Cross-module integration suites
     └── unit/          # Unit tests mirroring source packages
@@ -69,6 +70,8 @@ uv run smiles ingest --config config/ingestion-example.yaml
 ```
 
 Each source writes gzip-compressed NDJSON batches to `data/raw/<source>/` and maintains resumable checkpoints under `data/checkpoints/ingestion/<source>.json`. The sample configuration caches PubChem, ZINC, and ChEMBL archives under `data/raw/` and enables automatic resumption of interrupted transfers. To resume an interrupted job, re-run the same command; completed sources will be skipped automatically.
+
+Every successful ingestion run also generates a Markdown summary at `data/raw/raw-data-report.md`. The report captures per-source batch and record counts, output file sizes, and any cached download artifacts so you can audit large transfers quickly.
 
 ### Source-specific notes
 

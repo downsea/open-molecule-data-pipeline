@@ -119,5 +119,16 @@ def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path, monkeypatc
     assert checkpoint["batch_index"] == 2
     assert checkpoint["completed"] is True
 
+    report_path = tmp_path / "raw" / "raw-data-report.md"
+    assert report_path.exists()
+    report_contents = report_path.read_text(encoding="utf-8")
+    assert "# Raw Data Download Report" in report_contents
+    assert "## pubchem" in report_contents
+    assert "| pubchem | pubchem | yes | 2 | 2 | 3 |" in report_contents
+    assert str(tmp_path / "downloads").replace("\\", "/") in report_contents
+
     # Running again should read from checkpoint without additional output
     run_ingestion(config)
+
+    updated_report = report_path.read_text(encoding="utf-8")
+    assert "| pubchem | pubchem | yes | 2 | 0 | 0 |" in updated_report

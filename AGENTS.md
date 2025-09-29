@@ -8,7 +8,7 @@ These guidelines apply to the entire repository until another `AGENTS.md` in a s
 - Configure formatting with `ruff` (for linting/formatting) and `black` compatibility; ensure pre-commit hooks or CI leverage `uv run` for commands.
 
 ## Project Structure
-- Organize Python source under `src/` using namespace packages such as `src/ingestion`, `src/pipeline`, `src/analysis`, and `src/reporting`.
+- Place all Python source code under the `src/open_molecule_data_pipeline/` namespace package. Create subpackages (e.g., `ingestion`, `pipeline`, `analysis`, `reporting`) within that namespace rather than adding new top-level packages under `src/`.
 - Keep configuration files in `config/` (YAML or TOML) and store reusable notebooks or experiments in `notebooks/`.
 - Persist large data artifacts in `data/` with subfolders `raw/`, `processed/`, and `checkpoints/`; avoid committing large binaries.
 

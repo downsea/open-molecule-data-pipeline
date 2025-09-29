@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import inspect
 
@@ -47,6 +48,29 @@ CONNECTOR_REGISTRY: dict[str, ConnectorRegistration] = {
     "chembl": ConnectorRegistration(ChEMBLConnector, ChEMBLConfig),
     "chemspider": ConnectorRegistration(ChemSpiderConnector, ChemSpiderConfig),
 }
+
+
+@dataclass(frozen=True)
+class DirectorySummary:
+    """Aggregated statistics for files contained in a directory."""
+
+    directory: Path
+    file_count: int
+    total_bytes: int
+
+
+@dataclass(frozen=True)
+class SourceIngestionSummary:
+    """Execution summary for a single ingestion source."""
+
+    name: str
+    type: str
+    completed: bool
+    total_batches: int
+    batches_written: int
+    records_written: int
+    output: DirectorySummary
+    downloads: DirectorySummary | None
 
 
 class SourceDefinition(BaseModel):
@@ -157,7 +181,7 @@ def _run_source(
     definition: SourceDefinition,
     job_config: IngestionJobConfig,
     client_factory: ClientFactory | None,
-) -> None:
+) -> SourceIngestionSummary:
     checkpoint_manager = CheckpointManager(job_config.checkpoint_dir / "ingestion")
     writer = NDJSONWriter(job_config.output_dir, compress=job_config.compress_output)
     connector = _build_connector(
@@ -168,14 +192,169 @@ def _run_source(
     )
     checkpoint = checkpoint_manager.load(definition.name)
     start_batch = checkpoint.batch_index if checkpoint else 0
+    batches_written = 0
+    records_written = 0
 
     try:
         for page in connector.fetch_pages():
             _persist_page(writer, checkpoint_manager, definition.name, start_batch, page)
             if page.records:
                 start_batch += 1
+                batches_written += 1
+                records_written += len(page.records)
     finally:
         connector.close()
+
+    final_checkpoint = checkpoint_manager.load(definition.name)
+    total_batches = final_checkpoint.batch_index if final_checkpoint else start_batch
+    completed = bool(final_checkpoint.completed) if final_checkpoint else False
+
+    output_summary = _summarise_output_directory(job_config.output_dir / definition.name)
+    download_summary = _summarise_downloads(connector)
+
+    return SourceIngestionSummary(
+        name=definition.name,
+        type=definition.type,
+        completed=completed,
+        total_batches=total_batches,
+        batches_written=batches_written,
+        records_written=records_written,
+        output=output_summary,
+        downloads=download_summary,
+    )
+
+
+def _normalise_path(path: Path) -> Path:
+    """Return an absolute version of *path* without requiring it to exist."""
+
+    try:
+        return path.resolve()
+    except OSError:  # pragma: no cover - filesystem-dependent edge cases
+        return path
+
+
+def _iter_files(directory: Path, patterns: Sequence[str] | None) -> list[Path]:
+    """Return the list of files matching *patterns* within *directory*."""
+
+    if not directory.exists():
+        return []
+    if not patterns:
+        return [path for path in directory.rglob("*") if path.is_file()]
+    matches: list[Path] = []
+    for pattern in patterns:
+        matches.extend(path for path in directory.glob(pattern) if path.is_file())
+    return matches
+
+
+def _summarise_directory(path: Path, patterns: Sequence[str] | None) -> DirectorySummary:
+    """Compute file statistics for *path* based on optional *patterns*."""
+
+    directory = _normalise_path(path)
+    files = _iter_files(directory, patterns)
+    total_bytes = sum(file.stat().st_size for file in files)
+    return DirectorySummary(directory=directory, file_count=len(files), total_bytes=total_bytes)
+
+
+def _summarise_output_directory(path: Path) -> DirectorySummary:
+    """Summarise the generated NDJSON batches for a source."""
+
+    return _summarise_directory(path, patterns=("*.jsonl", "*.jsonl.gz"))
+
+
+def _summarise_downloads(connector: BaseConnector) -> DirectorySummary | None:
+    """Summarise cached download artifacts exposed by *connector*."""
+
+    download_dir = getattr(connector, "download_directory", None)
+    if download_dir is None:
+        return None
+    return _summarise_directory(Path(download_dir), patterns=None)
+
+
+def _format_bytes(size: int) -> str:
+    """Render *size* in bytes using a human-readable unit."""
+
+    if size <= 0:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    value = float(size)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.2f} {unit}"
+        value /= 1024
+    return f"{int(value)} B"  # pragma: no cover - fallback
+
+
+def _write_raw_data_report(
+    config: IngestionJobConfig, summaries: Sequence[SourceIngestionSummary]
+) -> None:
+    """Persist a Markdown report summarising raw data downloads."""
+
+    report_dir = _normalise_path(config.output_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "raw-data-report.md"
+
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    lines: list[str] = [
+        "# Raw Data Download Report",
+        "",
+        f"Generated: {timestamp}",
+        "",
+    ]
+
+    if summaries:
+        lines.append(
+            "| Source | Type | Completed | Total Batches | Batches (run) | Records (run) | "
+            "Output Files | Output Size | Download Files | Download Size |"
+        )
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+        for summary in summaries:
+            download_files = (
+                f"{summary.downloads.file_count:,}"
+                if summary.downloads is not None
+                else "n/a"
+            )
+            download_size = (
+                _format_bytes(summary.downloads.total_bytes)
+                if summary.downloads is not None
+                else "n/a"
+            )
+            lines.append(
+                "| "
+                f"{summary.name} | {summary.type} | {'yes' if summary.completed else 'no'} | "
+                f"{summary.total_batches:,} | {summary.batches_written:,} | {summary.records_written:,} | "
+                f"{summary.output.file_count:,} | {_format_bytes(summary.output.total_bytes)} | "
+                f"{download_files} | {download_size} |"
+            )
+    else:
+        lines.append("No sources were executed.")
+
+    for summary in summaries:
+        lines.extend([
+            "",
+            f"## {summary.name}",
+            "",
+            f"- **Source type**: {summary.type}",
+            f"- **Completed**: {'yes' if summary.completed else 'no'}",
+            f"- **Total batches**: {summary.total_batches:,}",
+            f"- **Batches written this run**: {summary.batches_written:,}",
+            f"- **Records written this run**: {summary.records_written:,}",
+            f"- **Output directory**: `{summary.output.directory.as_posix()}`",
+            f"- **Output artifacts**: {summary.output.file_count:,} files totaling {_format_bytes(summary.output.total_bytes)}",
+        ])
+
+        if summary.downloads is not None:
+            lines.append(
+                f"- **Download cache**: `{summary.downloads.directory.as_posix()}` "
+                f"({summary.downloads.file_count:,} files, "
+                f"{_format_bytes(summary.downloads.total_bytes)})"
+            )
+        else:
+            lines.append("- **Download cache**: n/a")
+
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def run_ingestion(
@@ -193,6 +372,7 @@ def run_ingestion(
             return None
         return client_factories.get(definition.name) or client_factories.get(definition.type)
 
+    summaries: list[SourceIngestionSummary] = []
     with ThreadPoolExecutor(max_workers=config.concurrency) as executor:
         futures = {
             executor.submit(_run_source, source, config, _factory_for(source)): source.name
@@ -201,12 +381,16 @@ def run_ingestion(
         for future in as_completed(futures):
             source_name = futures[future]
             try:
-                future.result()
+                summary = future.result()
             except Exception as exc:  # pragma: no cover - surfaced in tests
                 logger.error("ingestion.failed", source=source_name, error=str(exc))
                 raise
             else:
                 logger.info("ingestion.completed", source=source_name)
+                summaries.append(summary)
+
+    summaries.sort(key=lambda item: item.name)
+    _write_raw_data_report(config, summaries)
 
 
 __all__ = [

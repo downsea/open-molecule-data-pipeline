@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import shlex
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterator
@@ -184,7 +185,7 @@ class ZincConnector(BaseConnector):
 
         return _WgetCommand(url=url, output_path=output, username=username, password=password)
 
-    def _ensure_archive(self, command: _WgetCommand) -> Path:
+    def _ensure_archive(self, command: _WgetCommand) -> Path | None:
         target_path = self._download_dir / command.output_path
         target_path.parent.mkdir(parents=True, exist_ok=True)
         if target_path.exists() and target_path.stat().st_size > 0:
@@ -207,11 +208,29 @@ class ZincConnector(BaseConnector):
             kwargs["username"] = command.username
         if command.password:
             kwargs["password"] = command.password
-        self._aria2_downloader(command.url, target_path, **kwargs)
+        try:
+            self._aria2_downloader(command.url, target_path, **kwargs)
+        except subprocess.CalledProcessError as exc:
+            logger.error(
+                "ingestion.zinc.download_failed",
+                source=self.config.name,
+                url=command.url,
+                output=str(target_path),
+                returncode=exc.returncode,
+            )
+            return None
         return target_path
 
     def _iter_records(self, command: _WgetCommand) -> Iterator[MoleculeRecord]:
         archive_path = self._ensure_archive(command)
+        if archive_path is None:
+            logger.warning(
+                "ingestion.zinc.skip_entry",
+                source=self.config.name,
+                file=command.output_path.as_posix(),
+                url=command.url,
+            )
+            return
         delimiter = self.config.delimiter
         smiles_index = self.config.smiles_column
         identifier_index = self.config.identifier_column
@@ -253,6 +272,12 @@ class ZincConnector(BaseConnector):
                     smiles=smiles,
                     metadata=metadata,
                 )
+
+    @property
+    def download_directory(self) -> Path:
+        """Return the directory used to cache tranche archives."""
+
+        return self._download_dir
 
     def fetch_pages(self) -> Iterator[IngestionPage]:
         checkpoint = self._checkpoint_manager.load(self.config.name)

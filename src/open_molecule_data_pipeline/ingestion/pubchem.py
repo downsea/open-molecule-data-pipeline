@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
@@ -154,7 +155,7 @@ class PubChemConnector(BaseConnector):
         value = content.split()[0]
         return (entry.checksum_algorithm, value)
 
-    def _ensure_archive(self, entry: _PubChemEntry) -> Path:
+    def _ensure_archive(self, entry: _PubChemEntry) -> Path | None:
         target = self._download_dir / entry.filename
         target.parent.mkdir(parents=True, exist_ok=True)
         checksum = self._load_checksum(entry)
@@ -162,8 +163,24 @@ class PubChemConnector(BaseConnector):
         kwargs: dict[str, object] = {"options": self._aria2_options, "skip_existing": skip_existing}
         if checksum:
             kwargs["checksum"] = checksum
-        self._aria2_downloader(entry.url, target, **kwargs)
+        try:
+            self._aria2_downloader(entry.url, target, **kwargs)
+        except subprocess.CalledProcessError as exc:
+            logger.error(
+                "ingestion.pubchem.download_failed",
+                source=self.config.name,
+                url=entry.url,
+                output=str(target),
+                returncode=exc.returncode,
+            )
+            return None
         return target
+
+    @property
+    def download_directory(self) -> Path:
+        """Return the directory used to cache downloaded archives."""
+
+        return self._download_dir
 
     def _build_record(self, properties: Mapping[str, str]) -> MoleculeRecord:
         identifier = properties.get(self.config.identifier_tag, "").strip()
@@ -189,6 +206,14 @@ class PubChemConnector(BaseConnector):
 
     def _iter_records(self, entry: _PubChemEntry) -> Iterator[MoleculeRecord]:
         archive = self._ensure_archive(entry)
+        if archive is None:
+            logger.warning(
+                "ingestion.pubchem.skip_entry",
+                source=self.config.name,
+                url=entry.url,
+            )
+            return
+
         for properties in iter_sdf_records(archive):
             yield self._build_record(properties)
 
