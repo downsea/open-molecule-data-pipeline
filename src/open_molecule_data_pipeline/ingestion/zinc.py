@@ -1,13 +1,13 @@
-"""ZINC database ingestion via tranche download scripts."""
+"""ZINC database ingestion via tranche URI manifests."""
 
 from __future__ import annotations
 
 import gzip
-import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterator
+from urllib.parse import urlparse
 
 from pydantic import Field
 
@@ -25,19 +25,19 @@ logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
-class _WgetCommand:
-    """Parsed representation of a single wget download command."""
+class _TrancheResource:
+    """Description of a single tranche archive referenced in the manifest."""
 
     url: str
-    output_path: Path
-    username: str | None
-    password: str | None
+    relative_path: Path
 
 
 class ZincConfig(SourceConfig):
     """Configuration for ingesting ZINC tranche downloads."""
 
-    wget_file: Path = Field(description="Path to the generated wget script." )
+    uri_file: Path = Field(
+        description="Path to the newline-delimited list of tranche archive URLs."
+    )
     download_dir: Path | None = Field(
         default=None,
         description="Directory containing downloaded tranche archives.",
@@ -90,7 +90,7 @@ class ZincConnector(BaseConnector):
     ) -> None:
         super().__init__(config=config, checkpoint_manager=checkpoint_manager)
         self._download_dir = self._resolve_download_dir()
-        self._commands = self._parse_wget_file(config.wget_file)
+        self._resources = self._parse_uri_file(config.uri_file)
         self._aria2_downloader = aria2_downloader or download_with_aria2
         self._aria2_options = self._build_aria2_options()
 
@@ -105,88 +105,38 @@ class ZincConnector(BaseConnector):
     def _resolve_download_dir(self) -> Path:
         if self.config.download_dir is not None:
             return self.config.download_dir
-        return self.config.wget_file.resolve().parent
+        return self.config.uri_file.resolve().parent
 
-    def _parse_wget_file(self, path: Path) -> list[_WgetCommand]:
+    def _parse_uri_file(self, path: Path) -> list[_TrancheResource]:
         if not path.exists():
-            raise FileNotFoundError(f"wget script not found: {path}")
+            raise FileNotFoundError(f"URI manifest not found: {path}")
 
-        commands: list[_WgetCommand] = []
+        resources: list[_TrancheResource] = []
         for line_number, raw_line in enumerate(
             path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
         ):
             line = raw_line.strip()
             if not line or line.startswith("#"):
                 continue
-            for segment in line.split("&&"):
-                command = segment.strip()
-                if not command:
-                    continue
-                tokens = shlex.split(command)
-                if not tokens or tokens[0] != "wget":
-                    continue
-                parsed = self._parse_wget_tokens(tokens, line_number)
-                commands.append(parsed)
+            url = line.split()[0]
+            parsed = urlparse(url)
+            if not parsed.path:
+                raise ValueError(
+                    f"Unable to determine output path for URL on line {line_number}: {line}"
+                )
+            relative = PurePosixPath(parsed.path.lstrip("/"))
+            if not relative.parts:
+                raise ValueError(
+                    f"Invalid URL with empty path on line {line_number}: {line}"
+                )
+            resources.append(_TrancheResource(url=url, relative_path=Path(*relative.parts)))
 
-        if not commands:
-            raise ValueError(f"No wget commands found in script: {path}")
-        return commands
+        if not resources:
+            raise ValueError(f"No tranche URLs found in manifest: {path}")
+        return resources
 
-    def _normalise_output_path(self, raw: str, line_number: int) -> Path:
-        """Convert wget output targets to platform-agnostic paths."""
-
-        normalised = raw.replace("\\", "/")
-        pure_path = PurePosixPath(normalised)
-        if not pure_path.parts:
-            raise ValueError(
-                "Invalid wget command on line "
-                f"{line_number}: empty output path"
-            )
-        return Path(*pure_path.parts)
-
-    def _parse_wget_tokens(self, tokens: list[str], line_number: int) -> _WgetCommand:
-        url: str | None = None
-        output: Path | None = None
-        username = self.config.username
-        password = self.config.password
-
-        index = 1
-        while index < len(tokens):
-            token = tokens[index]
-            if token == "--user":
-                index += 1
-                if index < len(tokens):
-                    username = tokens[index]
-                index += 1
-                continue
-            if token == "--password":
-                index += 1
-                if index < len(tokens):
-                    password = tokens[index]
-                index += 1
-                continue
-            if token in {"-O", "--output-document"}:
-                index += 1
-                if index < len(tokens):
-                    output = self._normalise_output_path(tokens[index], line_number)
-                index += 1
-                continue
-            if token.startswith("-"):
-                index += 1
-                continue
-            if url is None:
-                url = token
-            index += 1
-
-        if url is None or output is None:
-            raise ValueError(
-                f"Invalid wget command on line {line_number}: {' '.join(tokens)}"
-            )
-
-        return _WgetCommand(url=url, output_path=output, username=username, password=password)
-
-    def _ensure_archive(self, command: _WgetCommand) -> Path | None:
-        target_path = self._download_dir / command.output_path
+    def _ensure_archive(self, resource: _TrancheResource) -> Path | None:
+        target_path = self._download_dir / resource.relative_path
         target_path.parent.mkdir(parents=True, exist_ok=True)
         if target_path.exists() and target_path.stat().st_size > 0:
             return target_path
@@ -200,42 +150,47 @@ class ZincConnector(BaseConnector):
         logger.info(
             "ingestion.zinc.download",
             source=self.config.name,
-            url=command.url,
+            url=resource.url,
             output=str(target_path),
         )
         kwargs: dict[str, object] = {"options": self._aria2_options, "skip_existing": False}
-        if command.username:
-            kwargs["username"] = command.username
-        if command.password:
-            kwargs["password"] = command.password
+        if self.config.username:
+            kwargs["username"] = self.config.username
+        if self.config.password:
+            kwargs["password"] = self.config.password
         try:
-            self._aria2_downloader(command.url, target_path, **kwargs)
+            self._aria2_downloader(resource.url, target_path, **kwargs)
         except subprocess.CalledProcessError as exc:
             logger.error(
                 "ingestion.zinc.download_failed",
                 source=self.config.name,
-                url=command.url,
+                url=resource.url,
                 output=str(target_path),
                 returncode=exc.returncode,
             )
             return None
         return target_path
 
-    def _iter_records(self, command: _WgetCommand) -> Iterator[MoleculeRecord]:
-        archive_path = self._ensure_archive(command)
+    def _iter_records(self, resource: _TrancheResource) -> Iterator[MoleculeRecord]:
+        archive_path = self._ensure_archive(resource)
         if archive_path is None:
             logger.warning(
                 "ingestion.zinc.skip_entry",
                 source=self.config.name,
-                file=command.output_path.as_posix(),
-                url=command.url,
+                file=resource.relative_path.as_posix(),
+                url=resource.url,
             )
             return
         delimiter = self.config.delimiter
         smiles_index = self.config.smiles_column
         identifier_index = self.config.identifier_column
 
-        with gzip.open(archive_path, "rt", encoding="utf-8", errors="replace") as stream:
+        if archive_path.suffix == ".gz":
+            stream_ctx = gzip.open(archive_path, "rt", encoding="utf-8", errors="replace")
+        else:
+            stream_ctx = archive_path.open("r", encoding="utf-8", errors="replace")
+
+        with stream_ctx as stream:
             for line_number, raw_line in enumerate(stream, start=1):
                 line = raw_line.strip()
                 if not line:
@@ -249,7 +204,7 @@ class ZincConnector(BaseConnector):
                     logger.debug(
                         "ingestion.zinc.skip_line",
                         source=self.config.name,
-                        file=str(command.output_path),
+                        file=str(resource.relative_path),
                         line=line_number,
                     )
                     continue
@@ -257,8 +212,8 @@ class ZincConnector(BaseConnector):
                 smiles = parts[smiles_index].strip()
                 identifier = parts[identifier_index].strip()
                 metadata = {
-                    "source_file": command.output_path.as_posix(),
-                    "download_url": command.url,
+                    "source_file": resource.relative_path.as_posix(),
+                    "download_url": resource.url,
                 }
                 for idx, value in enumerate(parts):
                     if idx in {smiles_index, identifier_index}:
@@ -292,13 +247,13 @@ class ZincConnector(BaseConnector):
             start_offset = int(checkpoint.cursor.get("line_offset", 0))
 
         batch: list[MoleculeRecord] = []
-        commands = self._commands
-        for command_index in range(start_entry, len(commands)):
-            command = commands[command_index]
-            line_offset = start_offset if command_index == start_entry else 0
+        resources = self._resources
+        for resource_index in range(start_entry, len(resources)):
+            resource = resources[resource_index]
+            line_offset = start_offset if resource_index == start_entry else 0
             processed_lines = 0
 
-            for record in self._iter_records(command):
+            for record in self._iter_records(resource):
                 if processed_lines < line_offset:
                     processed_lines += 1
                     continue
@@ -307,9 +262,9 @@ class ZincConnector(BaseConnector):
                 processed_lines += 1
                 if len(batch) >= self.config.batch_size:
                     next_cursor = {
-                        "entry_index": command_index,
+                        "entry_index": resource_index,
                         "line_offset": processed_lines,
-                        "file": command.output_path.as_posix(),
+                        "file": resource.relative_path.as_posix(),
                     }
                     yield IngestionPage(records=list(batch), next_cursor=next_cursor)
                     batch.clear()
@@ -318,7 +273,7 @@ class ZincConnector(BaseConnector):
                 logger.warning(
                     "ingestion.zinc.offset_exceeds_file",
                     source=self.config.name,
-                    file=command.output_path.as_posix(),
+                    file=resource.relative_path.as_posix(),
                     expected_offset=line_offset,
                     available_records=processed_lines,
                 )
@@ -328,20 +283,20 @@ class ZincConnector(BaseConnector):
 
             next_cursor: dict[str, int] | None
             if batch:
-                if command_index + 1 < len(commands):
-                    next_cursor = {"entry_index": command_index + 1, "line_offset": 0}
+                if resource_index + 1 < len(resources):
+                    next_cursor = {"entry_index": resource_index + 1, "line_offset": 0}
                 else:
                     next_cursor = None
                 yield IngestionPage(records=list(batch), next_cursor=next_cursor)
                 batch.clear()
             elif processed_lines == 0:
-                if command_index + 1 < len(commands):
-                    next_cursor = {"entry_index": command_index + 1, "line_offset": 0}
+                if resource_index + 1 < len(resources):
+                    next_cursor = {"entry_index": resource_index + 1, "line_offset": 0}
                 else:
                     next_cursor = None
                 yield IngestionPage(records=[], next_cursor=next_cursor)
 
-        if not commands:
+        if not resources:
             yield IngestionPage(records=[], next_cursor=None)
 
 __all__ = ["ZincConfig", "ZincConnector"]

@@ -21,17 +21,13 @@ def _write_gzip_lines(path: Path, lines: list[str]) -> None:
             handle.write("\n")
 
 
-def _create_wget_script(path: Path, relative_path: str) -> None:
-    path.write_text(
-        "mkdir -pv H04 && wget --user user --password pass "
-        "https://files.docking.org/zinc22/2d/H04/H04M000.smi.gz"
-        f" -O {relative_path}\n"
-    )
+def _create_uri_manifest(path: Path, url: str) -> None:
+    path.write_text(f"{url}\n", encoding="utf-8")
 
 
 def test_fetch_pages_uses_existing_archives(tmp_path: Path) -> None:
     download_dir = tmp_path / "downloads"
-    archive_path = download_dir / "H04" / "H04M000.smi.gz"
+    archive_path = download_dir / "zinc22" / "2d" / "H04" / "H04M000.smi.gz"
     _write_gzip_lines(
         archive_path,
         [
@@ -41,12 +37,13 @@ def test_fetch_pages_uses_existing_archives(tmp_path: Path) -> None:
         ],
     )
 
-    script_path = tmp_path / "zinc.wget"
-    _create_wget_script(script_path, "H04/H04M000.smi.gz")
+    manifest_path = tmp_path / "zinc.uri"
+    url = "https://files.docking.org/zinc22/2d/H04/H04M000.smi.gz"
+    _create_uri_manifest(manifest_path, url)
 
     config = ZincConfig(
         name="zinc",
-        wget_file=script_path,
+        uri_file=manifest_path,
         download_dir=download_dir,
         batch_size=2,
     )
@@ -74,8 +71,9 @@ def test_fetch_pages_uses_existing_archives(tmp_path: Path) -> None:
 
 
 def test_missing_archive_triggers_download(tmp_path: Path) -> None:
-    script_path = tmp_path / "zinc.wget"
-    _create_wget_script(script_path, "H04/H04M000.smi.gz")
+    manifest_path = tmp_path / "zinc.uri"
+    url = "https://files.docking.org/zinc22/2d/H04/H04M000.smi.gz"
+    _create_uri_manifest(manifest_path, url)
 
     downloaded: dict[str, Any] = {}
 
@@ -92,10 +90,12 @@ def test_missing_archive_triggers_download(tmp_path: Path) -> None:
 
     config = ZincConfig(
         name="zinc",
-        wget_file=script_path,
+        uri_file=manifest_path,
         download_dir=tmp_path / "downloads",
         batch_size=2,
         download_missing=True,
+        username="user",
+        password="pass",
     )
     checkpoint_manager = CheckpointManager(tmp_path / "checkpoints")
     connector = ZincConnector(
@@ -114,12 +114,13 @@ def test_missing_archive_triggers_download(tmp_path: Path) -> None:
 
 
 def test_missing_archive_without_download(tmp_path: Path) -> None:
-    script_path = tmp_path / "zinc.wget"
-    _create_wget_script(script_path, "H04/H04M000.smi.gz")
+    manifest_path = tmp_path / "zinc.uri"
+    url = "https://files.docking.org/zinc22/2d/H04/H04M000.smi.gz"
+    _create_uri_manifest(manifest_path, url)
 
     config = ZincConfig(
         name="zinc",
-        wget_file=script_path,
+        uri_file=manifest_path,
         download_dir=tmp_path / "downloads",
     )
     checkpoint_manager = CheckpointManager(tmp_path / "checkpoints")
@@ -131,7 +132,7 @@ def test_missing_archive_without_download(tmp_path: Path) -> None:
 
 def test_fetch_pages_respects_checkpoint(tmp_path: Path) -> None:
     download_dir = tmp_path / "downloads"
-    archive_path = download_dir / "H04" / "H04M000.smi.gz"
+    archive_path = download_dir / "zinc22" / "2d" / "H04" / "H04M000.smi.gz"
     _write_gzip_lines(
         archive_path,
         [
@@ -141,12 +142,13 @@ def test_fetch_pages_respects_checkpoint(tmp_path: Path) -> None:
         ],
     )
 
-    script_path = tmp_path / "zinc.wget"
-    _create_wget_script(script_path, "H04/H04M000.smi.gz")
+    manifest_path = tmp_path / "zinc.uri"
+    url = "https://files.docking.org/zinc22/2d/H04/H04M000.smi.gz"
+    _create_uri_manifest(manifest_path, url)
 
     config = ZincConfig(
         name="zinc",
-        wget_file=script_path,
+        uri_file=manifest_path,
         download_dir=download_dir,
         batch_size=2,
     )

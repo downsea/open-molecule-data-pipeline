@@ -11,6 +11,7 @@ These guidelines apply to the entire repository until another `AGENTS.md` in a s
 - Place all Python source code under the `src/open_molecule_data_pipeline/` namespace package. Create subpackages (e.g., `ingestion`, `pipeline`, `analysis`, `reporting`) within that namespace rather than adding new top-level packages under `src/`.
 - Keep configuration files in `config/` (YAML or TOML) and store reusable notebooks or experiments in `notebooks/`.
 - Persist large data artifacts in `data/` with subfolders `raw/`, `processed/`, and `checkpoints/`; avoid committing large binaries.
+- Maintain ingestion manifests under `data/` (for example `data/ZINC-downloader-2D-txt.uri` for ZINC tranche downloads) so connectors can mirror external archives without API access.
 
 ## Coding Conventions
 - Use type annotations and `pydantic` models for configuration and data schemas.

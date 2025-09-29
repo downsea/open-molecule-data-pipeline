@@ -18,7 +18,7 @@ job:
     - type: zinc
       name: zinc
       options:
-        wget_file: data/ZINC22-downloader-2D-smi.gz.wget
+        uri_file: data/ZINC-downloader-2D-txt.uri
         download_dir: data/raw/zinc22
         download_missing: true
     - type: chembl
