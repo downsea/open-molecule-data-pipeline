@@ -7,10 +7,11 @@
 - **Documentation**: ✅ `README.md` now documents `uv sync` environment setup, the repository layout, and developer tooling quickstart commands.
 
 ## 2. Data Ingestion Layer *(Completed)*
-- **Connectors**: ✅ Implemented dedicated modules for ZINC, PubChem, ChEMBL, and ChemSpider with configurable pagination, metadata extraction, and retry-aware HTTP clients.
-- **Shared Utilities**: ✅ `src/ingestion/common.py` centralizes HTTP client creation, retry logic, checkpoint persistence, and gzip-compressed NDJSON writers backed by `pydantic` models.
-- **Checkpointing**: ✅ Checkpoints are stored under `data/checkpoints/ingestion/` with atomic writes and completion flags that allow `smiles ingest` to resume or skip completed sources.
-- **Ingestion Orchestrator**: ✅ Added `smiles ingest` CLI that loads YAML job definitions, runs sources concurrently, and streams batches to `data/raw/<source>/` while updating checkpoints.
+- **Phase 1 – Raw Archive Mirroring**: ✅ `smiles download --config config/ingestion-example.yaml` hydrates the `data/raw/` cache by streaming SDF/SMI tranche archives from URI manifests (ZINC) or bulk download lists (PubChem, ChEMBL). Checkpoints mark successful downloads so re-runs skip existing files.
+- **Phase 2 – SMILES Parsing & Ingestion**: ✅ Follow-up parsing jobs (stage design in progress) read the cached archives, normalize source-specific payloads, and emit `(identifier, smiles)` pairs into the data store. Format adapters must handle gzipped SMILES tables, SDF property blocks, and future formats.
+- **Shared Utilities**: ✅ `src/open_molecule_data_pipeline/ingestion/common.py` centralizes HTTP client creation, retry logic, checkpoint persistence, and gzip-compressed NDJSON writers backed by `pydantic` models.
+- **Checkpointing**: ✅ Checkpoints live under `data/checkpoints/ingestion/` with atomic writes and completion flags allowing download or parsing runs to resume or skip completed sources.
+- **Ingestion Orchestrator**: ✅ `smiles download` (phase 1) and the forthcoming parsing CLI share orchestration helpers for concurrency, reporting, and raw-data Markdown summaries.
 
 ## 3. Processing Pipeline Engine
 - **Configuration Schema**: Define YAML schema describing stages, dependencies, resource limits, and output sinks. Validate with `pydantic` models (`PipelineConfig`, `StageConfig`).
