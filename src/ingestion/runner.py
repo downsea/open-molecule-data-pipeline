@@ -16,27 +16,28 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from .chembl import ChEMBLConfig, ChEMBLConnector
 from .chemspider import ChemSpiderConfig, ChemSpiderConnector
 from .common import (
+    BaseConnector,
     BaseHttpConnector,
     CheckpointManager,
-    HttpSourceConfig,
     IngestionCheckpoint,
     IngestionPage,
     NDJSONWriter,
+    SourceConfig,
 )
 from .pubchem import PubChemConfig, PubChemConnector
 from .zinc import ZincConfig, ZincConnector
 
 logger = structlog.get_logger(__name__)
 
-ClientFactory = Callable[[Mapping[str, str]], httpx.Client]
+ClientFactory = Callable[..., object]
 
 
 @dataclass(frozen=True)
 class ConnectorRegistration:
     """Associates a connector implementation with its config model."""
 
-    connector: type[BaseHttpConnector]
-    config: type[HttpSourceConfig]
+    connector: type[BaseConnector]
+    config: type[SourceConfig]
 
 
 CONNECTOR_REGISTRY: dict[str, ConnectorRegistration] = {
@@ -102,16 +103,22 @@ def _build_connector(
     checkpoint_manager: CheckpointManager,
     default_batch_size: int,
     client_factory: ClientFactory | None = None,
-) -> BaseHttpConnector:
+) -> BaseConnector:
     registration = CONNECTOR_REGISTRY[definition.type]
     config_kwargs = dict(definition.options)
     config_kwargs.setdefault("batch_size", default_batch_size)
     config = registration.config(name=definition.name, **config_kwargs)
-    return registration.connector(
-        config=config,
-        checkpoint_manager=checkpoint_manager,
-        client_factory=client_factory,
-    )
+    connector_cls = registration.connector
+    kwargs: dict[str, object] = {
+        "config": config,
+        "checkpoint_manager": checkpoint_manager,
+    }
+    if issubclass(connector_cls, BaseHttpConnector):
+        if client_factory is not None:
+            kwargs["client_factory"] = client_factory
+    elif client_factory is not None:
+        kwargs["ftp_factory"] = client_factory
+    return connector_cls(**kwargs)  # type: ignore[arg-type]
 
 
 def _persist_page(

@@ -120,13 +120,18 @@ def extract_json_path(payload: Any, path: Iterable[str]) -> Any:
     return current
 
 
-class HttpSourceConfig(BaseModel):
-    """Configuration shared by HTTP-backed ingestion sources."""
+class SourceConfig(BaseModel):
+    """Base configuration shared by all ingestion connectors."""
 
     name: str
+    batch_size: int = Field(default=1000, gt=0)
+
+
+class HttpSourceConfig(SourceConfig):
+    """Configuration shared by HTTP-backed ingestion sources."""
+
     base_url: str
     endpoint: str
-    batch_size: int = Field(default=1000, gt=0)
     batch_param: str = "batch_size"
     cursor_param: str | None = "cursor"
     params: dict[str, Any] = Field(default_factory=dict)
@@ -139,7 +144,23 @@ class HttpSourceConfig(BaseModel):
     metadata_fields: list[str] = Field(default_factory=list)
 
 
-class BaseHttpConnector:
+class BaseConnector:
+    """Abstract base class for ingestion connectors."""
+
+    def __init__(self, config: SourceConfig, checkpoint_manager: CheckpointManager) -> None:
+        self.config = config
+        self._checkpoint_manager = checkpoint_manager
+
+    def fetch_pages(self) -> Iterator[IngestionPage]:
+        """Yield pages of ingestion results."""
+
+        raise NotImplementedError
+
+    def close(self) -> None:  # pragma: no cover - interface default
+        """Release any connector resources."""
+
+
+class BaseHttpConnector(BaseConnector):
     """Base implementation for connectors backed by paginated HTTP APIs."""
 
     def __init__(
@@ -148,8 +169,7 @@ class BaseHttpConnector:
         checkpoint_manager: CheckpointManager,
         client_factory: Callable[[Mapping[str, str]], httpx.Client] | None = None,
     ) -> None:
-        self.config = config
-        self._checkpoint_manager = checkpoint_manager
+        super().__init__(config=config, checkpoint_manager=checkpoint_manager)
         factory = client_factory or (lambda headers: build_http_client(headers=headers))
         self._client = factory(config.headers)
 
@@ -257,6 +277,7 @@ class NDJSONWriter:
 
 
 __all__ = [
+    "BaseConnector",
     "BaseHttpConnector",
     "CheckpointManager",
     "HttpError",
@@ -265,6 +286,7 @@ __all__ = [
     "IngestionPage",
     "MoleculeRecord",
     "NDJSONWriter",
+    "SourceConfig",
     "build_http_client",
     "execute_request",
 ]
