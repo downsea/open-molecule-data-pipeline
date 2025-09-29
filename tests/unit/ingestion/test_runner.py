@@ -6,7 +6,12 @@ from pathlib import Path
 import httpx
 import orjson
 
-from ingestion.runner import IngestionJobConfig, SourceDefinition, run_ingestion
+from open_molecule_data_pipeline.ingestion.runner import (
+    IngestionJobConfig,
+    SourceDefinition,
+    run_ingestion,
+)
+
 
 
 def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path) -> None:

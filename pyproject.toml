@@ -34,7 +34,8 @@ dev = [
 ]
 
 [project.scripts]
-smiles = "cli:main"
+smiles = "open_molecule_data_pipeline.cli:main"
+
 
 [tool.ruff]
 line-length = 100
@@ -68,4 +69,5 @@ branch = true
 source = ["src"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src/open_molecule_data_pipeline"]
+

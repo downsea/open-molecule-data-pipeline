@@ -4,7 +4,13 @@ import gzip
 import json
 from pathlib import Path
 
-from ingestion.common import CheckpointManager, IngestionCheckpoint, MoleculeRecord, NDJSONWriter
+from open_molecule_data_pipeline.ingestion.common import (
+    CheckpointManager,
+    IngestionCheckpoint,
+    MoleculeRecord,
+    NDJSONWriter,
+)
+
 
 
 def test_checkpoint_manager_roundtrip(tmp_path: Path) -> None:
