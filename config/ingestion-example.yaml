@@ -16,9 +16,6 @@ job:
     - type: zinc
       name: zinc
       options:
-        base_url: https://example.test/zinc
-        endpoint: substances
-        records_path: [records]
-        next_cursor_path: [next]
-        id_field: zinc_id
-        smiles_field: smiles
+        wget_file: data/ZINC22-downloader-2D-smi.gz.wget
+        download_dir: data/raw/zinc22
+        download_missing: false
