@@ -1,76 +1,64 @@
-"""PubChem ingestion connector implementation."""
+"""PubChem ingestion connector implementation using manifest link files."""
 
 from __future__ import annotations
 
-import contextlib
-import gzip
-import tempfile
-from collections.abc import Callable, Iterable, Iterator, Mapping
-from html.parser import HTMLParser
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-from urllib.parse import urljoin
+from typing import Callable, Iterator, Mapping
 
-import httpx
-import structlog
 from pydantic import Field
 
+from ..logging_utils import get_logger
+from .aria2 import Aria2Options, download_with_aria2
 from .common import (
     BaseConnector,
     CheckpointManager,
     IngestionPage,
     MoleculeRecord,
     SourceConfig,
-    DEFAULT_USER_AGENT,
-    execute_request,
 )
+from .sdf import iter_sdf_records
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
-class _DirectoryListingParser(HTMLParser):
-    """Extract file names from an HTML directory index."""
-
-    def __init__(self, suffixes: Iterable[str]) -> None:
-        super().__init__()
-        self._suffixes = tuple(suffixes)
-        self._filenames: set[str] = set()
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str]]) -> None:
-        if tag.lower() != "a":
-            return
-        href = None
-        for key, value in attrs:
-            if key.lower() == "href":
-                href = value
-                break
-        if not href:
-            return
-        candidate = href.split("#", 1)[0].split("?", 1)[0].strip()
-        if not candidate or not candidate.endswith(self._suffixes):
-            return
-        # Directory listings sometimes include relative paths; keep the base name.
-        filename = candidate.rsplit("/", 1)[-1]
-        if filename:
-            self._filenames.add(filename)
-
-    def get_filenames(self) -> list[str]:
-        return sorted(self._filenames)
+@dataclass(frozen=True)
+class _PubChemEntry:
+    filename: str
+    url: str
+    checksum_url: str | None
+    checksum_algorithm: str | None
 
 
 class PubChemConfig(SourceConfig):
-    """Configuration for downloading PubChem SDF bundles over HTTPS."""
+    """Configuration for downloading PubChem SDF bundles via :command:`aria2c`."""
 
-    base_url: str = "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/CURRENT-Full/SDF/"
-    timeout: float = 60.0
-    file_suffixes: list[str] = Field(default_factory=lambda: [".sdf.gz", ".sdf"])
+    link_file: Path = Field(
+        description="Path to the newline-delimited list of PubChem SDF URLs."
+    )
+    download_dir: Path | None = Field(
+        default=None,
+        description="Directory where PubChem archives and checksum files are stored.",
+    )
+    checksum_suffix: str | None = Field(
+        default=".md5",
+        description=(
+            "Optional suffix appended to each SDF URL to locate its checksum file. "
+            "Set to null to skip checksum downloads."
+        ),
+    )
+    checksum_algorithm: str | None = Field(
+        default="md5",
+        description="Checksum algorithm used when checksum files are downloaded.",
+    )
     identifier_tag: str = "PUBCHEM_COMPOUND_CID"
     smiles_tag: str = "PUBCHEM_OPENEYE_ISO_SMILES"
     metadata_tags: list[str] = Field(default_factory=list)
+    aria2_options: dict[str, str | int | float | bool] = Field(default_factory=dict)
 
 
 class PubChemConnector(BaseConnector):
-    """Connector that downloads and parses PubChem SDF archives via HTTPS."""
+    """Connector that downloads and parses PubChem SDF archives."""
 
     config: PubChemConfig
 
@@ -78,108 +66,106 @@ class PubChemConnector(BaseConnector):
         self,
         config: PubChemConfig,
         checkpoint_manager: CheckpointManager,
-        client_factory: Callable[[], httpx.Client] | None = None,
+        aria2_downloader: Callable[..., None] | None = None,
     ) -> None:
         super().__init__(config=config, checkpoint_manager=checkpoint_manager)
-        self._client_factory = client_factory or self._create_default_client
-        self._client: httpx.Client | None = None
+        self._download_dir = self._resolve_download_dir()
+        self._aria2_downloader = aria2_downloader or download_with_aria2
+        self._aria2_options = self._build_aria2_options()
+        self._entries = self._parse_link_file(config.link_file)
 
-    def _create_default_client(self) -> httpx.Client:
-        return httpx.Client(
-            timeout=self.config.timeout,
-            headers={"User-Agent": DEFAULT_USER_AGENT},
-            follow_redirects=True,
-        )
+    def _resolve_download_dir(self) -> Path:
+        if self.config.download_dir is not None:
+            return self.config.download_dir
+        return self.config.link_file.resolve().parent
 
-    def _ensure_client(self) -> httpx.Client:
-        if self._client is None:
-            self._client = self._client_factory()
-        return self._client
-
-    def _list_remote_files(self, client: httpx.Client) -> list[str]:
-        request = client.build_request("GET", self.config.base_url)
-        response = execute_request(client, request)
+    def _build_aria2_options(self) -> Aria2Options:
+        options = self.config.aria2_options
+        if not options:
+            return Aria2Options()
         try:
-            parser = _DirectoryListingParser(self.config.file_suffixes)
-            parser.feed(response.text)
-            parser.close()
-            return parser.get_filenames()
-        finally:
-            response.close()
+            return Aria2Options(**options)
+        except TypeError as exc:  # pragma: no cover - validation guard
+            raise ValueError("Invalid aria2 options supplied") from exc
 
-    @contextlib.contextmanager
-    def _download_file(self, client: httpx.Client, filename: str) -> Iterator[Path]:
-        url = urljoin(self.config.base_url, filename)
-        request = client.build_request("GET", url)
-        response = execute_request(client, request)
-        temp_path: Path | None = None
-        try:
-            suffix = Path(filename).suffix
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
-                temp_path = Path(handle.name)
-                for chunk in response.iter_bytes():
-                    handle.write(chunk)
-        finally:
-            response.close()
+    def _parse_link_file(self, path: Path) -> list[_PubChemEntry]:
+        if not path.exists():
+            raise FileNotFoundError(f"PubChem link file not found: {path}")
 
-        assert temp_path is not None  # pragma: no cover - defensive guard
-        try:
-            yield temp_path
-        finally:
-            with contextlib.suppress(FileNotFoundError):
-                temp_path.unlink()
+        entries: list[_PubChemEntry] = []
+        checksum_suffix = self.config.checksum_suffix
+        checksum_algorithm = self.config.checksum_algorithm if checksum_suffix else None
 
-    @contextlib.contextmanager
-    def _open_sdf_stream(self, path: Path) -> Iterator[Iterable[str]]:
-        if path.suffix == ".gz":
-            with gzip.open(path, "rt", encoding="utf-8", errors="replace") as stream:
-                yield stream
-        else:
-            with path.open("r", encoding="utf-8", errors="replace") as stream:
-                yield stream
+        for line_number, raw_line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+        ):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
 
-    @staticmethod
-    def _parse_entry(lines: list[str]) -> dict[str, str]:
-        properties: dict[str, str] = {}
-        current_tag: str | None = None
-        buffer: list[str] = []
-        for line in lines:
-            if line.startswith(">"):
-                if current_tag is not None:
-                    properties[current_tag] = "\n".join(buffer).strip()
-                start = line.find("<")
-                end = line.find(">", start + 1)
-                if start != -1 and end != -1:
-                    current_tag = line[start + 1 : end].strip()
-                    buffer = []
-                else:
-                    current_tag = None
-                    buffer = []
-            elif current_tag is not None:
-                buffer.append(line.rstrip("\r"))
-        if current_tag is not None:
-            properties[current_tag] = "\n".join(buffer).strip()
-        return properties
+            url = line.split()[0]
+            filename = Path(url).name
+            if not filename:
+                raise ValueError(
+                    f"Unable to determine filename for PubChem URL on line {line_number}: {line}"
+                )
 
-    def _iter_sdf_entries(self, client: httpx.Client, filename: str) -> Iterator[dict[str, str]]:
-        with self._download_file(client, filename) as temp_path:
-            with self._open_sdf_stream(temp_path) as stream:
-                entry_lines: list[str] = []
-                for raw_line in stream:
-                    line = raw_line.rstrip("\n")
-                    if line.strip() == "$$$$":
-                        if entry_lines:
-                            yield self._parse_entry(entry_lines)
-                            entry_lines = []
-                    else:
-                        entry_lines.append(line)
-                if entry_lines:
-                    yield self._parse_entry(entry_lines)
+            checksum_url: str | None = None
+            checksum_alg: str | None = None
+            if checksum_suffix and checksum_algorithm:
+                checksum_url = f"{url}{checksum_suffix}"
+                checksum_alg = checksum_algorithm
+
+            entries.append(
+                _PubChemEntry(
+                    filename=filename,
+                    url=url,
+                    checksum_url=checksum_url,
+                    checksum_algorithm=checksum_alg,
+                )
+            )
+
+        if not entries:
+            raise ValueError(f"No SDF URLs discovered in link file: {path}")
+        return entries
+
+    def _checksum_path(self, entry: _PubChemEntry) -> Path:
+        suffix = self.config.checksum_suffix or ""
+        return self._download_dir / f"{entry.filename}{suffix}"
+
+    def _load_checksum(self, entry: _PubChemEntry) -> tuple[str, str] | None:
+        if not entry.checksum_url or not entry.checksum_algorithm:
+            return None
+        checksum_path = self._checksum_path(entry)
+        if not checksum_path.exists() or checksum_path.stat().st_size == 0:
+            checksum_path.parent.mkdir(parents=True, exist_ok=True)
+            self._aria2_downloader(
+                entry.checksum_url,
+                checksum_path,
+                options=self._aria2_options,
+                skip_existing=False,
+            )
+        content = checksum_path.read_text(encoding="utf-8", errors="ignore").strip()
+        if not content:
+            raise ValueError(f"Checksum file is empty: {checksum_path}")
+        value = content.split()[0]
+        return (entry.checksum_algorithm, value)
+
+    def _ensure_archive(self, entry: _PubChemEntry) -> Path:
+        target = self._download_dir / entry.filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        checksum = self._load_checksum(entry)
+        skip_existing = checksum is None
+        kwargs: dict[str, object] = {"options": self._aria2_options, "skip_existing": skip_existing}
+        if checksum:
+            kwargs["checksum"] = checksum
+        self._aria2_downloader(entry.url, target, **kwargs)
+        return target
 
     def _build_record(self, properties: Mapping[str, str]) -> MoleculeRecord:
         identifier = properties.get(self.config.identifier_tag, "").strip()
         smiles = properties.get(self.config.smiles_tag, "").strip()
-        metadata: dict[str, Any] = {
+        metadata: dict[str, str] = {
             key: value
             for key, value in properties.items()
             if key not in {self.config.identifier_tag, self.config.smiles_tag}
@@ -198,14 +184,16 @@ class PubChemConnector(BaseConnector):
             metadata=metadata,
         )
 
+    def _iter_records(self, entry: _PubChemEntry) -> Iterator[MoleculeRecord]:
+        archive = self._ensure_archive(entry)
+        for properties in iter_sdf_records(archive):
+            yield self._build_record(properties)
+
     def fetch_pages(self) -> Iterator[IngestionPage]:
         checkpoint = self._checkpoint_manager.load(self.config.name)
         if checkpoint and checkpoint.completed:
             logger.info("ingestion.skip", source=self.config.name, reason="completed")
             return
-
-        client = self._ensure_client()
-        filenames = self._list_remote_files(client)
 
         start_file = 0
         start_offset = 0
@@ -213,62 +201,50 @@ class PubChemConnector(BaseConnector):
             start_file = int(checkpoint.cursor.get("file_index", 0))
             start_offset = int(checkpoint.cursor.get("record_offset", 0))
 
-        if start_file >= len(filenames):
-            yield IngestionPage(records=[], next_cursor=None)
-            return
-
         batch: list[MoleculeRecord] = []
-        current_file = start_file
-        current_offset = start_offset
-        yielded = False
+        entries = self._entries
+        for file_index in range(start_file, len(entries)):
+            entry = entries[file_index]
+            record_offset = start_offset if file_index == start_file else 0
+            processed = 0
 
-        while current_file < len(filenames):
-            filename = filenames[current_file]
-            logger.info("ingestion.pubchem.file", source=self.config.name, file=filename)
-            entry_index = 0
-            for entry in self._iter_sdf_entries(client, filename):
-                if entry_index < current_offset:
-                    entry_index += 1
+            for record in self._iter_records(entry):
+                if processed < record_offset:
+                    processed += 1
                     continue
-                record = self._build_record(entry)
                 batch.append(record)
-                entry_index += 1
+                processed += 1
                 if len(batch) >= self.config.batch_size:
                     next_cursor = {
-                        "file_index": current_file,
-                        "file_name": filename,
-                        "record_offset": entry_index,
+                        "file_index": file_index,
+                        "file_name": entry.filename,
+                        "record_offset": processed,
                     }
-                    yielded = True
                     yield IngestionPage(records=list(batch), next_cursor=next_cursor)
                     batch.clear()
-            current_file += 1
-            current_offset = 0
+
+            start_offset = 0
+
             if batch:
                 next_cursor = (
                     {
-                        "file_index": current_file,
-                        "file_name": filenames[current_file]
-                        if current_file < len(filenames)
+                        "file_index": file_index + 1,
+                        "file_name": entries[file_index + 1].filename
+                        if file_index + 1 < len(entries)
                         else None,
                         "record_offset": 0,
                     }
-                    if current_file < len(filenames)
+                    if file_index + 1 < len(entries)
                     else None
                 )
-                yielded = True
                 yield IngestionPage(records=list(batch), next_cursor=next_cursor)
                 batch.clear()
 
-        if not yielded:
+        if not entries:
             yield IngestionPage(records=[], next_cursor=None)
 
-    def close(self) -> None:
-        if self._client is None:
-            return
-        with contextlib.suppress(Exception):
-            self._client.close()
-        self._client = None
+    def close(self) -> None:  # pragma: no cover - nothing to close
+        return
 
 
 __all__ = ["PubChemConfig", "PubChemConnector"]

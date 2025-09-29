@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
-import structlog
 
+from ..logging_utils import get_logger
 from .runner import load_config, run_ingestion
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 @click.command(name="ingest")
