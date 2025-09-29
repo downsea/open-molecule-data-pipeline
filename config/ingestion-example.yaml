@@ -9,12 +9,10 @@ job:
     - type: pubchem
       name: pubchem
       options:
-        base_url: https://example.test/pubchem
-        endpoint: v1/records
-        records_path: [records]
-        next_cursor_path: [next]
-        id_field: cid
-        smiles_field: smiles
+        ftp_host: ftp.ncbi.nlm.nih.gov
+        ftp_directory: pubchem/Compound/CURRENT-Full/SDF
+        identifier_tag: PUBCHEM_COMPOUND_CID
+        smiles_tag: PUBCHEM_OPENEYE_ISO_SMILES
     - type: zinc
       name: zinc
       options:
