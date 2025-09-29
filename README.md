@@ -72,7 +72,8 @@ Each source writes gzip-compressed NDJSON batches to `data/raw/<source>/` and ma
 ### Source-specific notes
 
 - **ZINC** – Generate a tranche wget script from [CartBlanche](https://cartblanche.docking.org/tranches/2d) and save it as `data/ZINC22-downloader-2D-smi.gz.wget`. The ZINC connector parses this script, expecting the referenced `.smi.gz` archives to exist under `data/raw/zinc22/` (or it can download them automatically by setting `download_missing: true`). Each SMILES line should be formatted as `<SMILES>\t<ZINC_ID>`; additional columns are preserved as metadata.
-- **PubChem** – The connector enumerates SDF bundles from the public HTTPS directory listing at [`https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/CURRENT-Full/SDF/`](https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/CURRENT-Full/SDF/). Ensure outbound HTTPS access is permitted or mirror the SDF bundles locally and override the `base_url` in the connector configuration to point at your mirror.
+- **PubChem** – The connector enumerates SDF bundles from the public HTTPS directory listing at [`https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/CURRENT-Full/SDF/`](https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/CURRENT-Full/SDF/) and save it as `data/Index_of_pubchem_Compound_CURRENT-Full_SDF.html`. Ensure outbound HTTPS access is permitted or mirror the SDF bundles locally and override the `base_url` in the connector configuration to point at your mirror.
+- **chEMBL** - The latest ChEMBLdb sdf data is listed in https://ftp.ebi.ac.uk/pub/databases/chembl/ChEMBLdb/latest/ , the sdf file download link are saved in `data/chEMBL_sdf_link.txt`.
 
 ## Continuous Integration
 The repository ships with a GitHub Actions workflow (`.github/workflows/ci.yml`) that installs dependencies via `uv`, runs linting, type checking, and executes the test suite to ensure changes remain healthy.

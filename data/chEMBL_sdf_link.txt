@@ -1,0 +1,1 @@
+https://ftp.ebi.ac.uk/pub/databases/chembl/ChEMBLdb/latest/chembl_36.sdf.gz
