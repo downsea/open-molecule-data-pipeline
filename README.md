@@ -65,7 +65,11 @@ uv run pytest
 Stage 2 introduces configurable ingestion connectors for ZINC, PubChem, ChEMBL, and ChemSpider along with checkpointed output writers. Jobs are described with YAML files (see [`config/ingestion-example.yaml`](config/ingestion-example.yaml)) and executed via the `smiles` CLI:
 
 ```bash
-# Execute an ingestion job
+# Phase 1: mirror raw archives referenced in the job definition
+uv run smiles download --config config/ingestion-example.yaml
+
+# Phase 2: parse cached archives and emit SMILES batches (streaming sources will
+# run end-to-end in a single step)
 uv run smiles ingest --config config/ingestion-example.yaml
 ```
 

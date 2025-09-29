@@ -6,23 +6,9 @@ job:
   concurrency: 2
   compress_output: true
   sources:
-    - type: pubchem
-      name: pubchem
-      options:
-        link_file: data/pubchem_sdf_link.txt
-        download_dir: data/raw/pubchem
-        identifier_tag: PUBCHEM_COMPOUND_CID
-        smiles_tag: PUBCHEM_OPENEYE_ISO_SMILES
-        metadata_tags:
-          - PUBCHEM_IUPAC_INCHI
     - type: zinc
       name: zinc
       options:
         uri_file: data/ZINC-downloader-2D-txt.uri
         download_dir: data/raw/zinc22
         download_missing: true
-    - type: chembl
-      name: chembl
-      options:
-        link_file: data/chEMBL_sdf_link.txt
-        download_dir: data/raw/chembl

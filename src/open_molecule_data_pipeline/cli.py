@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import click
 
-from .ingestion.cli import ingest_command
+from .ingestion.cli import download_command, ingest_command
 
 
 @click.group()
@@ -13,6 +13,7 @@ def main() -> None:
 
 
 main.add_command(ingest_command)
+main.add_command(download_command)
 
 
 __all__ = ["main"]

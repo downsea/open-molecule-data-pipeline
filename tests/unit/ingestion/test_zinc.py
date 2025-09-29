@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gzip
 from pathlib import Path
 from typing import Any
 
@@ -13,12 +12,9 @@ from open_molecule_data_pipeline.ingestion.common import (
 from open_molecule_data_pipeline.ingestion.zinc import ZincConfig, ZincConnector
 
 
-def _write_gzip_lines(path: Path, lines: list[str]) -> None:
+def _write_text_lines(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with gzip.open(path, "wt", encoding="utf-8") as handle:
-        for line in lines:
-            handle.write(line)
-            handle.write("\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _create_uri_manifest(path: Path, url: str) -> None:
@@ -27,8 +23,8 @@ def _create_uri_manifest(path: Path, url: str) -> None:
 
 def test_fetch_pages_uses_existing_archives(tmp_path: Path) -> None:
     download_dir = tmp_path / "downloads"
-    archive_path = download_dir / "zinc22" / "2d" / "H04" / "H04M000.smi.gz"
-    _write_gzip_lines(
+    archive_path = download_dir / "2D" / "AA" / "AAAA.txt"
+    _write_text_lines(
         archive_path,
         [
             "C\tZINC00000001",
@@ -38,7 +34,7 @@ def test_fetch_pages_uses_existing_archives(tmp_path: Path) -> None:
     )
 
     manifest_path = tmp_path / "zinc.uri"
-    url = "https://files.docking.org/zinc22/2d/H04/H04M000.smi.gz"
+    url = "https://irwinlab2.ucsf.edu/2D/AA/AAAA.txt"
     _create_uri_manifest(manifest_path, url)
 
     config = ZincConfig(
@@ -72,7 +68,7 @@ def test_fetch_pages_uses_existing_archives(tmp_path: Path) -> None:
 
 def test_missing_archive_triggers_download(tmp_path: Path) -> None:
     manifest_path = tmp_path / "zinc.uri"
-    url = "https://files.docking.org/zinc22/2d/H04/H04M000.smi.gz"
+    url = "https://irwinlab2.ucsf.edu/2D/AA/AAAA.txt"
     _create_uri_manifest(manifest_path, url)
 
     downloaded: dict[str, Any] = {}
@@ -80,7 +76,7 @@ def test_missing_archive_triggers_download(tmp_path: Path) -> None:
     def fake_downloader(url: str, output_path: Path, **kwargs: object) -> None:
         downloaded["url"] = url
         downloaded["kwargs"] = kwargs
-        _write_gzip_lines(
+        _write_text_lines(
             output_path,
             [
                 "C\tZINC00000001",
@@ -106,7 +102,7 @@ def test_missing_archive_triggers_download(tmp_path: Path) -> None:
 
     pages = list(connector.fetch_pages())
 
-    assert downloaded["url"].endswith("H04M000.smi.gz")
+    assert downloaded["url"].endswith("AA/AAAA.txt")
     assert downloaded["kwargs"]["username"] == "user"
     assert downloaded["kwargs"]["password"] == "pass"
     assert len(pages) == 1
@@ -115,7 +111,7 @@ def test_missing_archive_triggers_download(tmp_path: Path) -> None:
 
 def test_missing_archive_without_download(tmp_path: Path) -> None:
     manifest_path = tmp_path / "zinc.uri"
-    url = "https://files.docking.org/zinc22/2d/H04/H04M000.smi.gz"
+    url = "https://irwinlab2.ucsf.edu/2D/AA/AAAA.txt"
     _create_uri_manifest(manifest_path, url)
 
     config = ZincConfig(
@@ -132,8 +128,8 @@ def test_missing_archive_without_download(tmp_path: Path) -> None:
 
 def test_fetch_pages_respects_checkpoint(tmp_path: Path) -> None:
     download_dir = tmp_path / "downloads"
-    archive_path = download_dir / "zinc22" / "2d" / "H04" / "H04M000.smi.gz"
-    _write_gzip_lines(
+    archive_path = download_dir / "2D" / "AA" / "AAAA.txt"
+    _write_text_lines(
         archive_path,
         [
             "C\tZINC00000001",
@@ -143,7 +139,7 @@ def test_fetch_pages_respects_checkpoint(tmp_path: Path) -> None:
     )
 
     manifest_path = tmp_path / "zinc.uri"
-    url = "https://files.docking.org/zinc22/2d/H04/H04M000.smi.gz"
+    url = "https://irwinlab2.ucsf.edu/2D/AA/AAAA.txt"
     _create_uri_manifest(manifest_path, url)
 
     config = ZincConfig(

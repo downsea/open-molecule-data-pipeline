@@ -23,6 +23,7 @@ These guidelines apply to the entire repository until another `AGENTS.md` in a s
 - Place unit tests in `tests/unit/` and integration tests in `tests/integration/` mirroring module structure.
 - Ensure integration tests mock external services or use recorded fixtures; avoid live API calls by default.
 - Use `uv run` to execute `pytest`, `ruff`, and other tooling commands.
+- Prefer the two-step ingestion workflow during data refreshes: `uv run smiles download --config <file>` to mirror archives, followed by parsing jobs (e.g., `uv run smiles ingest --config <file>`) to materialize SMILES batches.
 
 ## Documentation
 - Maintain high-level architecture documentation under `docs/` (e.g., pipeline diagrams, ingestion specs).
