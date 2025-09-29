@@ -1,0 +1,26 @@
+# Example ingestion job definition used by `smiles ingest`.
+job:
+  output_dir: data/raw
+  checkpoint_dir: data/checkpoints
+  batch_size: 500
+  concurrency: 2
+  compress_output: true
+  sources:
+    - type: pubchem
+      name: pubchem
+      options:
+        base_url: https://example.test/pubchem
+        endpoint: v1/records
+        records_path: [records]
+        next_cursor_path: [next]
+        id_field: cid
+        smiles_field: smiles
+    - type: zinc
+      name: zinc
+      options:
+        base_url: https://example.test/zinc
+        endpoint: substances
+        records_path: [records]
+        next_cursor_path: [next]
+        id_field: zinc_id
+        smiles_field: smiles
