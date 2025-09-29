@@ -68,11 +68,11 @@ Stage 2 introduces configurable ingestion connectors for ZINC, PubChem, ChEMBL, 
 uv run smiles ingest --config config/ingestion-example.yaml
 ```
 
-Each source writes gzip-compressed NDJSON batches to `data/raw/<source>/` and maintains resumable checkpoints under `data/checkpoints/ingestion/<source>.json`. To resume an interrupted job, re-run the same command; completed sources will be skipped automatically.
+Each source writes gzip-compressed NDJSON batches to `data/raw/<source>/` and maintains resumable checkpoints under `data/checkpoints/ingestion/<source>.json`. The sample configuration caches PubChem, ZINC, and ChEMBL archives under `data/raw/` and enables automatic resumption of interrupted transfers. To resume an interrupted job, re-run the same command; completed sources will be skipped automatically.
 
 ### Source-specific notes
 
-- **ZINC** – Generate a tranche wget script from [CartBlanche](https://cartblanche.docking.org/tranches/2d) and save it as `data/ZINC22-downloader-2D-smi.gz.wget`. The connector parses each `wget` invocation, extracts embedded credentials, and shells out to `aria2c` to fetch any missing tranche archives (resume and checksum support included). Existing `.smi.gz` archives are reused directly.
+- **ZINC** – Generate a tranche wget script from [CartBlanche](https://cartblanche.docking.org/tranches/2d) and save it as `data/ZINC22-downloader-2D-smi.gz.wget`. The connector parses each `wget` invocation, extracts embedded credentials, and shells out to `aria2c` to fetch any missing tranche archives (resume and checksum support included). Existing `.smi.gz` archives are reused directly; set `download_missing: true` (the example default) to have the CLI retrieve absent files automatically.
 - **PubChem** – Download the HTML directory index from [`https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/CURRENT-Full/SDF/`](https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/CURRENT-Full/SDF/) and store it as `data/Index_of_pubchem_Compound_CURRENT-Full_SDF.html`. The connector reads this index, matches each `.sdf.gz` link with its companion `.md5` checksum, and uses `aria2c` to download or resume the bundles into the configured cache directory before parsing.
 - **ChEMBL** – Record the bulk SDF URLs (one per line) in `data/chEMBL_sdf_link.txt`. Each archive is downloaded via `aria2c` (with resume) into the local cache prior to SMILES extraction. Default tag mappings expect `ChEMBL_ID` and `CANONICAL_SMILES`, but they can be overridden in the connector configuration.
 
