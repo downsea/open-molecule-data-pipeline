@@ -13,6 +13,7 @@ from open_molecule_data_pipeline.ingestion.runner import (
 )
 
 
+
 def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path) -> None:
     calls: dict[str, int] = {"count": 0}
 

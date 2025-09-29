@@ -12,6 +12,7 @@ from open_molecule_data_pipeline.ingestion.common import (
 )
 
 
+
 def test_checkpoint_manager_roundtrip(tmp_path: Path) -> None:
     manager = CheckpointManager(tmp_path)
     checkpoint = IngestionCheckpoint(cursor={"cursor": "abc"}, batch_index=3, completed=True)
