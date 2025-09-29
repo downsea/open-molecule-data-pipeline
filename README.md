@@ -69,6 +69,11 @@ uv run smiles ingest --config config/ingestion-example.yaml
 
 Each source writes gzip-compressed NDJSON batches to `data/raw/<source>/` and maintains resumable checkpoints under `data/checkpoints/ingestion/<source>.json`. To resume an interrupted job, re-run the same command; completed sources will be skipped automatically.
 
+### Source-specific notes
+
+- **ZINC** – Generate a tranche wget script from [CartBlanche](https://cartblanche.docking.org/tranches/2d) and save it as `data/ZINC22-downloader-2D-smi.gz.wget`. The ZINC connector parses this script, expecting the referenced `.smi.gz` archives to exist under `data/raw/zinc22/` (or it can download them automatically by setting `download_missing: true`). Each SMILES line should be formatted as `<SMILES>\t<ZINC_ID>`; additional columns are preserved as metadata.
+- **PubChem** – The default configuration downloads SDF bundles from the public FTP endpoint (`ftp.ncbi.nlm.nih.gov`) using anonymous credentials. Ensure outbound FTP access is permitted in your environment or mirror the SDF bundles locally and update the connector options accordingly.
+
 ## Continuous Integration
 The repository ships with a GitHub Actions workflow (`.github/workflows/ci.yml`) that installs dependencies via `uv`, runs linting, type checking, and executes the test suite to ensure changes remain healthy.
 
