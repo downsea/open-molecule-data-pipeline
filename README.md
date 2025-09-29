@@ -58,8 +58,19 @@ uv run pytest
     └── unit/          # Unit tests mirroring source packages
 ```
 
+## Running SMILES Ingestion Jobs
+
+Stage 2 introduces configurable ingestion connectors for ZINC, PubChem, ChEMBL, and ChemSpider along with checkpointed output writers. Jobs are described with YAML files (see [`config/ingestion-example.yaml`](config/ingestion-example.yaml)) and executed via the `smiles` CLI:
+
+```bash
+# Execute an ingestion job
+uv run smiles ingest --config config/ingestion-example.yaml
+```
+
+Each source writes gzip-compressed NDJSON batches to `data/raw/<source>/` and maintains resumable checkpoints under `data/checkpoints/ingestion/<source>.json`. To resume an interrupted job, re-run the same command; completed sources will be skipped automatically.
+
 ## Continuous Integration
 The repository ships with a GitHub Actions workflow (`.github/workflows/ci.yml`) that installs dependencies via `uv`, runs linting, type checking, and executes the test suite to ensure changes remain healthy.
 
 ## Next Steps
-Stage 1 scaffolds the environment and repository structure. Subsequent stages will implement ingestion connectors, the resilient pipeline engine, analysis modules, and reporting capabilities.
+With ingestion connectors in place, Stage 3 will focus on the resilient processing pipeline, distributed execution, and deeper analysis integrations.

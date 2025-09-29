@@ -6,15 +6,11 @@
 - **Continuous Integration**: ✅ GitHub Actions workflow leverages `uv` to sync dependencies, then executes linting, type checking, and tests on push and pull requests.
 - **Documentation**: ✅ `README.md` now documents `uv sync` environment setup, the repository layout, and developer tooling quickstart commands.
 
-## 2. Data Ingestion Layer
-- **Connectors**: Implement modules for each source:
-  - `zinc`: Bulk download via available S3/HTTP endpoints with chunked streaming.
-  - `pubchem`: REST API with pagination, caching, and cursor persistence.
-  - `chembl`: Use ChEMBL web services with throttling and incremental updates.
-  - `chemspider`: Handle API keys securely, implement request signing if needed, and respect rate limits.
-- **Shared Utilities**: `src/ingestion/common.py` for HTTP clients, retry/backoff (tenacity), structured logging, and validation of SMILES payloads.
-- **Checkpointing**: Persist per-source cursors and batch metadata to `data/checkpoints/ingestion/` (JSON or SQLite). Use `pydantic` models to serialize state.
-- **Ingestion Orchestrator**: CLI command (`smiles ingest`) to load source configs, spawn concurrent download workers, write compressed line-delimited JSON/Parquet outputs to `data/raw/<source>/` and update checkpoints atomically.
+## 2. Data Ingestion Layer *(Completed)*
+- **Connectors**: ✅ Implemented dedicated modules for ZINC, PubChem, ChEMBL, and ChemSpider with configurable pagination, metadata extraction, and retry-aware HTTP clients.
+- **Shared Utilities**: ✅ `src/ingestion/common.py` centralizes HTTP client creation, retry logic, checkpoint persistence, and gzip-compressed NDJSON writers backed by `pydantic` models.
+- **Checkpointing**: ✅ Checkpoints are stored under `data/checkpoints/ingestion/` with atomic writes and completion flags that allow `smiles ingest` to resume or skip completed sources.
+- **Ingestion Orchestrator**: ✅ Added `smiles ingest` CLI that loads YAML job definitions, runs sources concurrently, and streams batches to `data/raw/<source>/` while updating checkpoints.
 
 ## 3. Processing Pipeline Engine
 - **Configuration Schema**: Define YAML schema describing stages, dependencies, resource limits, and output sinks. Validate with `pydantic` models (`PipelineConfig`, `StageConfig`).
