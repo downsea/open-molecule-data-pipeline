@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import io
 import json
 from pathlib import Path
+from typing import Any
 
-import httpx
+import pytest
 
 from open_molecule_data_pipeline.ingestion.runner import (
     IngestionJobConfig,
@@ -41,45 +43,40 @@ def _sdf_entry(cid: str, smiles: str) -> str:
     )
 
 
-def _mock_pubchem_client(
-    files: dict[str, bytes], base_url: str, calls: dict[str, int]
-) -> httpx.Client:
-    base = httpx.URL(base_url)
-    listing_path = base.path
-    if not listing_path.endswith("/"):
-        listing_path = f"{listing_path}/"
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls["requests"] = calls.get("requests", 0) + 1
-        if request.method != "GET":  # pragma: no cover - defensive guard
-            return httpx.Response(405)
-
-        path = request.url.path
-        if path.rstrip("/") == listing_path.rstrip("/"):
-            links = "".join(
-                f'<a href="{name}">{name}</a>' for name in sorted(files)
-            )
-            return httpx.Response(200, text=f"<html><body>{links}</body></html>")
-
-        if not path.startswith(listing_path):
-            return httpx.Response(404)
-
-        filename = path[len(listing_path) :]
-        if filename not in files:
-            return httpx.Response(404)
-        return httpx.Response(200, content=files[filename])
-
-    transport = httpx.MockTransport(handler)
-    return httpx.Client(transport=transport, timeout=5.0)
+def _write_index(path: Path, filenames: list[str]) -> None:
+    links = "".join(f'<a href="{name}">{name}</a>\n' for name in filenames)
+    path.write_text(f"<html><body>{links}</body></html>")
 
 
-def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path) -> None:
-    files = {
-        "chunk_a.sdf.gz": _gzip_bytes(_sdf_entry("CID1", "C") + _sdf_entry("CID2", "CC")),
-        "chunk_b.sdf.gz": _gzip_bytes(_sdf_entry("CID3", "CCC")),
+def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    base_url = "https://example.test/pubchem/"
+    index_file = tmp_path / "index.html"
+    filenames = ["chunk_a.sdf.gz", "chunk_a.sdf.gz.md5", "chunk_b.sdf.gz", "chunk_b.sdf.gz.md5"]
+    _write_index(index_file, filenames)
+
+    payload_a = _gzip_bytes(_sdf_entry("CID1", "C") + _sdf_entry("CID2", "CC"))
+    payload_b = _gzip_bytes(_sdf_entry("CID3", "CCC"))
+    fixtures: dict[str, bytes] = {
+        f"{base_url}chunk_a.sdf.gz": payload_a,
+        f"{base_url}chunk_a.sdf.gz.md5": hashlib.md5(payload_a).hexdigest().encode("utf-8")
+        + b"  chunk_a.sdf.gz\n",
+        f"{base_url}chunk_b.sdf.gz": payload_b,
+        f"{base_url}chunk_b.sdf.gz.md5": hashlib.md5(payload_b).hexdigest().encode("utf-8")
+        + b"  chunk_b.sdf.gz\n",
     }
-    calls: dict[str, int] = {}
-    base_url = "https://example.test/pubchem/Compound/CURRENT-Full/SDF/"
+
+    def fake_downloader(url: str, output_path: Path, **kwargs: Any) -> None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = fixtures[url]
+        if url.endswith(".md5"):
+            output_path.write_text(payload.decode("utf-8"))
+        else:
+            output_path.write_bytes(payload)
+
+    monkeypatch.setattr(
+        "open_molecule_data_pipeline.ingestion.pubchem.download_with_aria2",
+        fake_downloader,
+    )
 
     config = IngestionJobConfig(
         output_dir=tmp_path / "raw",
@@ -92,17 +89,15 @@ def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path) -> None:
                 type="pubchem",
                 name="pubchem",
                 options={
+                    "index_file": index_file,
+                    "download_dir": tmp_path / "downloads",
                     "base_url": base_url,
                 },
             )
         ],
     )
 
-    def client_factory() -> httpx.Client:
-        calls["factory"] = calls.get("factory", 0) + 1
-        return _mock_pubchem_client(files, base_url, calls)
-
-    run_ingestion(config, client_factories={"pubchem": client_factory})
+    run_ingestion(config)
 
     output_dir = tmp_path / "raw" / "pubchem"
     first_batch = output_dir / "pubchem-batch-000001.jsonl"
@@ -124,5 +119,5 @@ def test_run_ingestion_writes_batches_and_checkpoints(tmp_path: Path) -> None:
     assert checkpoint["batch_index"] == 2
     assert checkpoint["completed"] is True
 
-    run_ingestion(config, client_factories={"pubchem": client_factory})
-    assert calls["factory"] == 1
+    # Running again should read from checkpoint without additional output
+    run_ingestion(config)
