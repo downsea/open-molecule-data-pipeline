@@ -5,7 +5,7 @@ from __future__ import annotations
 import gzip
 import shlex
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterator
 
 import httpx
@@ -114,6 +114,18 @@ class ZincConnector(BaseConnector):
             raise ValueError(f"No wget commands found in script: {path}")
         return commands
 
+    def _normalise_output_path(self, raw: str, line_number: int) -> Path:
+        """Convert wget output targets to platform-agnostic paths."""
+
+        normalised = raw.replace("\\", "/")
+        pure_path = PurePosixPath(normalised)
+        if not pure_path.parts:
+            raise ValueError(
+                "Invalid wget command on line "
+                f"{line_number}: empty output path"
+            )
+        return Path(*pure_path.parts)
+
     def _parse_wget_tokens(self, tokens: list[str], line_number: int) -> _WgetCommand:
         url: str | None = None
         output: Path | None = None
@@ -138,7 +150,7 @@ class ZincConnector(BaseConnector):
             if token in {"-O", "--output-document"}:
                 index += 1
                 if index < len(tokens):
-                    output = Path(tokens[index])
+                    output = self._normalise_output_path(tokens[index], line_number)
                 index += 1
                 continue
             if token.startswith("-"):
@@ -211,7 +223,7 @@ class ZincConnector(BaseConnector):
                 smiles = parts[smiles_index].strip()
                 identifier = parts[identifier_index].strip()
                 metadata = {
-                    "source_file": str(command.output_path),
+                    "source_file": command.output_path.as_posix(),
                     "download_url": command.url,
                 }
                 for idx, value in enumerate(parts):
@@ -257,7 +269,7 @@ class ZincConnector(BaseConnector):
                     next_cursor = {
                         "entry_index": command_index,
                         "line_offset": processed_lines,
-                        "file": str(command.output_path),
+                        "file": command.output_path.as_posix(),
                     }
                     yield IngestionPage(records=list(batch), next_cursor=next_cursor)
                     batch.clear()
@@ -266,7 +278,7 @@ class ZincConnector(BaseConnector):
                 logger.warning(
                     "ingestion.zinc.offset_exceeds_file",
                     source=self.config.name,
-                    file=str(command.output_path),
+                    file=command.output_path.as_posix(),
                     expected_offset=line_offset,
                     available_records=processed_lines,
                 )
