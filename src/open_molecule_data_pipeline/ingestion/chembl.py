@@ -79,7 +79,8 @@ class ChEMBLConnector(BaseConnector):
             raise FileNotFoundError(f"ChEMBL link file not found: {path}")
 
         entries: list[_ChEMBLEntry] = []
-        for raw_line in path.read_text().splitlines():
+        for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+
             line = raw_line.strip()
             if not line or line.startswith("#"):
                 continue

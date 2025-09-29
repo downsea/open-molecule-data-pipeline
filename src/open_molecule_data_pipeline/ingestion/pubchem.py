@@ -104,7 +104,7 @@ class PubChemConnector(BaseConnector):
             raise FileNotFoundError(f"PubChem index not found: {path}")
 
         parser = _IndexLinkParser()
-        parser.feed(path.read_text())
+        parser.feed(path.read_text(encoding="utf-8", errors="replace"))
         parser.close()
 
         sdf_links: dict[str, str] = {}
@@ -158,6 +158,8 @@ class PubChemConnector(BaseConnector):
             return None
         checksum_path = self._checksum_path(entry)
         if not checksum_path.exists() or checksum_path.stat().st_size == 0:
+            checksum_path.parent.mkdir(parents=True, exist_ok=True)
+
             self._aria2_downloader(
                 entry.checksum_url,
                 checksum_path,
@@ -172,6 +174,8 @@ class PubChemConnector(BaseConnector):
 
     def _ensure_archive(self, entry: _PubChemEntry) -> Path:
         target = self._download_dir / entry.filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+
         checksum = self._load_checksum(entry)
         skip_existing = checksum is None
         kwargs: dict[str, object] = {"options": self._aria2_options, "skip_existing": skip_existing}

@@ -111,7 +111,9 @@ class ZincConnector(BaseConnector):
             raise FileNotFoundError(f"wget script not found: {path}")
 
         commands: list[_WgetCommand] = []
-        for line_number, raw_line in enumerate(path.read_text().splitlines(), start=1):
+        for line_number, raw_line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+        ):
             line = raw_line.strip()
             if not line or line.startswith("#"):
                 continue

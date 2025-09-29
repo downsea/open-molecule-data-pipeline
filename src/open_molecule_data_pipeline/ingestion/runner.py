@@ -91,7 +91,7 @@ class IngestionJob(BaseModel):
 def load_config(path: Path) -> IngestionJobConfig:
     """Load an :class:`IngestionJobConfig` from a YAML file."""
 
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
     try:
         wrapper = IngestionJob.model_validate(data)
     except ValidationError as exc:  # pragma: no cover - pydantic already tested
